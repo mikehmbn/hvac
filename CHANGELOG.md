@@ -1,10 +1,314 @@
 # Changelog
 
-## 0.6.5 (Unreleased)
+## 0.10.0 (February 26th, 2020)
+
+### 🚀 Features
+- Add a correct endpoint for CRL retrieving . GH-547
+
+### 📚 Documentation
+
+- Fixes close quotes in example usage of read_secret_version. GH-557
+- Fixes typo in docs: much -> must. GH-555
+
+### 🧰 Miscellaneous
+
+- Don't send optional parameters unless explicitly specified. GH-533
+
+*Note*: [GH-533](https://github.com/hvac/hvac/pull/533) includes fundamental behavior involving sending parameters 
+to API requests to Vault. Many hvac method parameters that would have been sent with default arguments no
+longer are included in requests to Vault. Notably, the following behavioral changes should be expected (copied from the 
+related PR comments):
+
+Azure:
+  - CHANGED: `create_role` parameter `policies` now accepts CSV string or list of strings
+
+Database:
+  - CHANGED: `create_role` documentation updated to something meaningful 🙃
+
+GCP:
+  - `configure` parameter `google_certs_endpoint` is deprecated
+  - `create_role` parameter `project_id` is deprecated by `bound_projects` (list)
+
+GitHub:
+  - `configure` is missing a lot of parameters
+
+LDAP:
+  - CHANGED: `configure` parameters `user_dn` and `group_dn` made optional
+    - Retained argument position to prevent being a breaking change
+  - CHANGED: `hvac/constants/ldap.py` file removed as it is no longer used
+
+MFA:
+  - This entire endpoint is deprecated so I didn't bother updating it
+
+Okta:
+  - CHANGED: `configure` parameter `base_url` default value now differs from API documentation
+    - This is likely just a [documentation issue](https://github.com/hashicorp/vault/issues/7653)
+  - `register_user`, `read_user`, and `delete_user` duplicate URL parameter `username` in JSON payload
+    - I left this one as-is as it doesn't appear to hurt anything
+  - Ditto for `delete_group`, but `register_group` and `list_group` correctly omit it
+
+PKI:
+  - CHANGED: `sign_data` and `verify_signed_data` optional parameter `marshaling_algorithm` added
+
+RADIUS:
+  - `configure` is missing a lot of parameters
+  - BUG: `register_user` attempted to convert `username` string into a CSV list (?!) for POST data
+    - Didn't hurt anything as `username` is extracted from URL path in Vault server
+  - BUG: `register_user` parameter `policies` never actually passed as parameter
+
+System Backend:
+  - Auth
+    - `enable_auth_method` parameter `plugin_name` is deprecated
+    - CHANGED: `enable_audit_device` optional parameter `local` was added
+  - Init
+    - `initialize` provides default for required API parameters `secret_shares` and `secret_threshold`
+  - Key
+    - `start_root_token_generation` parameter `otp` is deprecated
+
+**Misc:**
+  - There seems to be some discrepancy on how "extra arguments" are accepted:
+    - Some methods use only `**kwargs` (e.g. `hvac/api/system_backend/auth.py`)
+    - Some use `*args` and `**kwargs` (e.g. `hvac/api/secrets_engines/active_directory.py`)
+    - `hvac/api/secrets_engines/pki.py` uses `extra_params={}`
+  - Most argument names match API parameter names, but some don't
+    - Example: `hvac/api/auth_methods/ldap.py` `configure` uses `user_dn` instead of `userdn`
+    - Example: `hvac/api/system_backend/auth.py` `configure` uses `method_type` instead of `type`
+  - Many methods duplicate URL parameters into JSON payload as well
+    - This isn't necessary and fortunately Vault ignores the extra parameters
+  - `ttl`, `max_ttl`, `policies`, `period`, `num_uses` and a few other fields are deprecated as of Vault version 1.2.0
+    - https://github.com/hashicorp/vault/blob/master/CHANGELOG.md#120-july-30th-2019
+
+Thanks to @findmyname666, @llamasoft, @moisesguimaraes, @philherbert and Adrian Eib for their lovely contributions.
+
+
+## 0.9.6 (November 20th, 2019)
+
+### 🚀 Features
+
+- Added userpass auth method. GH-519
+- added rabbitmq secrets backend. GH-540
+- Quote/Escape all URL placeholders. GH-532
+
+### 📚 Documentation
+
+- Getting Started Guide and LDAP Auth Updates. GH-524
+
+### 🧰 Miscellaneous
+
+- Handle bad gateway from Vault. GH-542
+- Fix GET/LIST typos. GH-536
+- Fix Travis HEAD build + Overhaul install scripts. GH-535
+- Improve Integration Test Error Handling. GH-531
+
+Thanks to @DaveDeCaprio, @Dowwie, @drewmullen, @jeffwecan, @llamasoft and @vamshideveloper for their lovely contributions.
+
+## 0.9.5 (July 19th, 2019)
+
+### 🚀 Features
+
+- Add Active Directory Secrets Engine Support. GH-508
+
+### 📚 Documentation
+
+- Include Recently Added Namespace Documentation In Toctree. GH-509
+
+Thanks to @jeffwecan and @vamshideveloper for their lovely contributions.
+
+## 0.9.4 (July 18th, 2019)
+
+### 🚀 Features
+
+- Add delete_namespace Method and Establish Namespace Documentation. GH-500
+
+### 🐛 Bug Fixes
+
+- Fix consul configure_access/create_or_update_role Method Return Values. GH-502
+
+### 📚 Documentation
+
+- Fix Database generate_credentials Docstring Params. GH-498
+
+### 🧰 Miscellaneous
+
+- Add config for updatedocs app. GH-495
+- Add a Codeowners file for automatic reviewer assignments. GH-494
+
+Thanks to @Tylerlhess, @drewmullen and @jeffwecan for their lovely contributions.
+
+
+## 0.9.3 (July 7th, 2019)
+
+### 🚀 Features
+
+- Add Create and List Namespace System Backend Methods. GH-489
+- Expanded Support for AWS Auth Method. GH-482
+- Capabilities System Backend Support. GH-476
+
+### 🐛 Bug Fixes
+
+- GCP Auth Test Case Updates For Changes in Vault v1.1.1+. GH-487
+- Change AWS `generate_credentials` request method to GET. GH-475
+
+### 📚 Documentation
+
+- Numerous Fixes and Doctest Support for Transit Secrets Engine. GH-486
+
+### 🧰 Miscellaneous
+
+- Start Using Enterprise (Trial) Version of Vault For Travis CI Builds. GH-478
+- Update Travis CI Test Matrix With Latest Vault Version & Drop Python 3.6. GH-488
+- Set up release-drafter / _mostly_ automated releases. GH-485
+
+Thanks to @donjar, @fhemberger, @jeffwecan, @stevefranks and @stevenmanton for their lovely contributions.
+
+## 0.9.2 (June 8th, 2019)
+
+BUG FIXES:
+
+* Fix kubernetes auth method list roles method. [GH-466](https://github.com/hvac/hvac/pull/466)
+* Enable consul secrets engine. [GH-460](https://github.com/hvac/hvac/pull/460)
+* Enable database secrets engine. [GH-455](https://github.com/hvac/hvac/pull/455)
+* Many fixes for the database secrets engine. [GH-457](https://github.com/hvac/hvac/pull/457)
 
 IMPROVEMENTS:
 
-* Support for Vault Namespaces. 
+* The `enable_auth_method()`, `tune_auth_method()`, `enable_secrets_engine()`, `tune_mount_configuration()` system backend method now take arbitrary `**kwargs` parameters to provide greater support for variations in accepted parameters in the underlying Vault plugins.
+* Azure auth params, add `num_uses`, change `bound_location` -> `bound_locations` and `bound_resource_group_names` -> `bound_resource_groups`. [GH-452](https://github.com/hvac/hvac/pull/452)
+
+MISCELLANEOUS:
+
+* The hvac project now has gitter chat enabled. Feel free to check it out for any online discussions related to this module at: [gitter.im/hvac/community](https://gitter.im/hvac/community))! [GH-465](https://github.com/hvac/hvac/pull/465)
+* Added Vault agent socket listener usage example under the "advanced usage" documentation section at: [hvac.readthedocs.io](https://hvac.readthedocs.io/en/stable/advanced_usage.html#vault-agent-unix-socket-listener) [GH-468](https://github.com/hvac/hvac/issues/468)
+
+Thanks to @denisvll, @Dudesons, and @drewmullen for their lovely contributions.
+
+## 0.9.1 (May 25th, 2019)
+
+BUG FIXES:
+
+* Fix Azure list roles [GH-448](https://github.com/hvac/hvac/pull/448)
+
+IMPROVEMENTS:
+* Support for the PKI secrets engine. [GH-436](https://github.com/hvac/hvac/pull/436)
+
+MISCELLANEOUS:
+
+* `delete_roleset()` method added to GCP secrets engine support. [GH-449](https://github.com/hvac/hvac/pull/449)
+
+Thanks to @nledez and @drewmullen for their lovely contributions.
+
+## 0.9.0 (May 23rd, 2019)
+
+BUG FIXES:
+
+* Update path to azure.login() [GH-429](https://github.com/hvac/hvac/pull/429)
+* AWS secrets engine generate credentials updated to a post request. [GH-430](https://github.com/hvac/hvac/pull/430)
+
+IMPROVEMENTS:
+
+* Support for the Radius auth method. [GH-420](https://github.com/hvac/hvac/pull/420)
+* Support for the Database secrets engine. [GH-431](https://github.com/hvac/hvac/pull/431)
+* Add the consul secret engine support [GH-432](https://github.com/hvac/hvac/pull/432)
+* Support for the GCP secrets engine. [GH-443](https://github.com/hvac/hvac/pull/443)
+
+MISCELLANEOUS:
+
+* Remove logger call within adapters module [GH-445](https://github.com/hvac/hvac/pull/445)
+* Add docs for auth_cubbyhole [GH-427](https://github.com/hvac/hvac/pull/427)
+
+Thanks to @paulcaskey, @stevenmanton, @brad-alexander, @yoyomeng2, @JadeHayes, @Dudesons for their lovely contributions.
+
+## 0.8.2 (April 4th, 2019)
+
+BUG FIXES:
+
+* Fix priority of client url and VAULT_ADDR environment variable. [GH-423](https://github.com/hvac/hvac/pull/423)
+* Update setup.py to only compile hvac package. [GH-418](https://github.com/hvac/hvac/pull/418)
+
+Thanks to @eltoder and @andytumelty for their lovely contributions.
+
+## 0.8.1 (March 31st, 2019)
+
+BUG FIXES:
+
+* Fix `initialize()` method `recovery_shares` and `recovery_threshold` parameter validation regression. [GH-416](https://github.com/hvac/hvac/pull/416)
+
+## 0.8.0 (March 29th, 2019)
+
+BACKWARDS COMPATIBILITY NOTICE:
+
+* The `Client()` class constructor now behaves similarly to Vault CLI in that it uses the `VAULT_ADDR` environmental variable for the Client URL when that variable is set. Along the same lines, when no token is passed into the `Client()` constructor, it will attempt to load a token from the `VAULT_TOKEN` environmental variable or the `~/.vault-token` file where available. [GH-411](https://github.com/hvac/hvac/pull/411) 
+
+IMPROVEMENTS:
+
+* Support for the Kubernetes auth method. [GH-408](https://github.com/hvac/hvac/pull/408)
+
+BUG FIXES:
+
+* Fix for comparision `recovery_threshold` and `recovery_shares` during initialization. [GH-398](https://github.com/hvac/hvac/pull/398)
+* Fix request method for AWS secrets engine `generate_credentials()` method. [GH-403](https://github.com/hvac/hvac/pull/403)
+* Fix request parameter (`n_bytes` -> `bytes`) for Transit secrets engine `generate_random_bytes()` method. [GH-377](https://github.com/hvac/hvac/pull/377)
+
+Thanks to @engstrom, @viralpoetry, @bootswithdefer, @steved, @kserrano, @spbsoluble, @uepoch, @singuliere, @frgaudet, @jsporna, & @mrsiesta for their lovely contributions.
+
+## 0.7.2 (January 1st, 2019)
+
+IMPROVEMENTS:
+
+* Support for the AWS secrets engine. [GH-370](https://github.com/hvac/hvac/pull/370)
+
+BUG FIXES:
+
+* Fixes for intermittent test case failures. [GH-361](https://github.com/hvac/hvac/pull/361) & [GH-364](https://github.com/hvac/hvac/pull/364)
+
+MISCELLANEOUS:
+
+* Travis CI builds now run against Python 3.7 (along side the previously tested 2.7 and 3.6 versions). [GH-360](https://github.com/hvac/hvac/pull/360)
+* Documentation build test case added. [GH-366](https://github.com/hvac/hvac/pull/366)
+* Module version now managed by the `bumpversion` utility exclusively. [GH-369](https://github.com/hvac/hvac/pull/369)
+
+## 0.7.1 (December 19th, 2018)
+
+IMPROVEMENTS:
+
+* Support for the Okta auth method. [GH-341](https://github.com/hvac/hvac/pull/341)
+
+BUG FIXES:
+
+* Simplify redirect handling in `Adapter` class to fix issues following location headers with fully qualified URLs. Note: hvac now converts `//` to `/` within any paths. [GH-348](https://github.com/hvac/hvac/pull/348) 
+* Fixed a bug where entity and group member IDs were not being passed in to Identity secrets engine group creation / updates. [GH-346](https://github.com/hvac/hvac/pull/346)
+* Ensure all types of responses for the `read_health_status()` system backend method can be retrieved without exceptions being raised. [GH-347](https://github.com/hvac/hvac/pull/347)
+* Fix `read_seal_status()` in `Client` class's `seal_status` property. [GH-354](https://github.com/hvac/hvac/pull/354)
+
+DOCUMENTATION UPDATES:
+
+* Example GCP auth method `login()` call with google-api-python-client usage added: [Example with google-api-python-client Usage](https://hvac.readthedocs.io/en/latest/usage/auth_methods/gcp.html#example-with-google-api-python-client-usage). [GH-350](https://github.com/hvac/hvac/pull/350)
+
+MISCELLANEOUS:
+
+* Note: Starting after release 0.7.0, `develop` is the main integration branch for the hvac project. The `master` branch is now intended to capture the state of the most recent release.
+* Test cases for hvac are no longer included in the release artifacts published to PyPi. [GH-334](https://github.com/hvac/hvac/pull/334)
+* The `create_or_update_policy` system backend method now supports a "pretty_print" argument for different JSON formatting. This allows create more viewable policy documents when retrieve existing policies (e.g., from within the Vault UI interface). [GH-342](https://github.com/hvac/hvac/pull/342)
+* Explicit support for Vault v0.8.3 dropped. CI/CD tests updated to run against Vault v1.0.0. [GH-344](https://github.com/hvac/hvac/pull/344) 
+
+## 0.7.0 (November 1st, 2018)
+
+DEPRECATION NOTICES:
+
+* All auth method classes are now accessible under the `auth` property on the `hvac.Client` class. [GH-310](https://github.com/hvac/hvac/pull/310). (E.g. the `github`, `ldap`, and `mfa` Client properties' methods are now accessible under `Client.auth.github`, etc.)
+* All secrets engines classes are now accessible under the `secrets` property on the `hvac.Client` class. [GH-311](https://github.com/hvac/hvac/pull/311) (E.g. the `kv`, Client property's methods are now accessible under `Client.secrets.kv`)
+* All system backend classes are now accessible under the `sys` property on the `hvac.Client` class. [GH-314](https://github.com/hvac/hvac/pull/314) ([GH-314] through [GH-325]) (E.g. methods such as `enable_secret_backend()` under the Client class are now accessible under `Client.sys.enable_secrets_engine()`, etc.)
+
+IMPROVEMENTS:
+
+* Support for Vault Namespaces. [GH-268](https://github.com/hvac/hvac/pull/268)
+* Support for the Identity secrets engine. [GH-269](https://github.com/hvac/hvac/pull/269)
+* Support for the GCP auth method. [GH-240](https://github.com/hvac/hvac/pull/240)
+* Support for the Azure auth method. [GH-286](https://github.com/hvac/hvac/pull/286)
+* Support for the Azure secrets engine. [GH-287](https://github.com/hvac/hvac/pull/287)
+* Expanded Transit secrets engine support. [GH-303](https://github.com/hvac/hvac/pull/303)
+
+Thanks to @tiny-dancer, @jacquat, @deejay1, @MJ111, @jasonarewhy, and @alexandernst for their lovely contributions.
 
 ## 0.6.4 (September 5th, 2018)
 

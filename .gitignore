@@ -6,12 +6,15 @@
 /dist
 /*.egg-info
 /.tox
-
+test/*.log
 /.coverage
 /cover
 *~
 
-/hvac/version
-
 # sphinx build folder
 docs/_build/
+
+.idea/
+*.iml
+venv/
+.envrc

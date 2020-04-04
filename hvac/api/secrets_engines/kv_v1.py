@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """KvV1 methods module."""
-from hvac import exceptions
+from hvac import exceptions, utils
 from hvac.api.vault_api_base import VaultApiBase
 
 DEFAULT_MOUNT_POINT = 'secret'
@@ -27,11 +27,10 @@ class KvV1(VaultApiBase):
         :return: The JSON response of the read_secret request.
         :rtype: dict
         """
-        api_path = '/v1/{mount_point}/{path}'.format(mount_point=mount_point, path=path)
-        response = self._adapter.get(
+        api_path = utils.format_url('/v1/{mount_point}/{path}', mount_point=mount_point, path=path)
+        return self._adapter.get(
             url=api_path,
         )
-        return response.json()
 
     def list_secrets(self, path, mount_point=DEFAULT_MOUNT_POINT):
         """Return a list of key names at the specified location.
@@ -51,11 +50,10 @@ class KvV1(VaultApiBase):
         :return: The JSON response of the list_secrets request.
         :rtype: dict
         """
-        api_path = '/v1/{mount_point}/{path}'.format(mount_point=mount_point, path=path)
-        response = self._adapter.list(
+        api_path = utils.format_url('/v1/{mount_point}/{path}', mount_point=mount_point, path=path)
+        return self._adapter.list(
             url=api_path,
         )
-        return response.json()
 
     def create_or_update_secret(self, path, secret, method=None, mount_point=DEFAULT_MOUNT_POINT):
         """Store a secret at the specified location.
@@ -95,14 +93,14 @@ class KvV1(VaultApiBase):
                 method = 'POST'
 
         if method == 'POST':
-            api_path = '/v1/{mount_point}/{path}'.format(mount_point=mount_point, path=path)
+            api_path = utils.format_url('/v1/{mount_point}/{path}', mount_point=mount_point, path=path)
             return self._adapter.post(
                 url=api_path,
                 json=secret,
             )
 
         elif method == 'PUT':
-            api_path = '/v1/{mount_point}/{path}'.format(mount_point=mount_point, path=path)
+            api_path = utils.format_url('/v1/{mount_point}/{path}', mount_point=mount_point, path=path)
             return self._adapter.post(
                 url=api_path,
                 json=secret,
@@ -127,7 +125,7 @@ class KvV1(VaultApiBase):
         :return: The response of the delete_secret request.
         :rtype: requests.Response
         """
-        api_path = '/v1/{mount_point}/{path}'.format(mount_point=mount_point, path=path)
+        api_path = utils.format_url('/v1/{mount_point}/{path}', mount_point=mount_point, path=path)
         return self._adapter.delete(
             url=api_path,
         )

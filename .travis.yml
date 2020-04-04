@@ -1,90 +1,48 @@
 dist: xenial
-sudo: false
 language: python
+python:
+  - '3.7'
+  - '2.7'
+env:
+  - HVAC_VAULT_VERSION=1.3.4 HVAC_VAULT_LICENSE=enterprise
+  - HVAC_VAULT_VERSION=1.2.4 HVAC_VAULT_LICENSE=enterprise
+  - HVAC_VAULT_VERSION=1.1.5 HVAC_VAULT_LICENSE=enterprise
+  - HVAC_VAULT_VERSION=1.0.3 HVAC_VAULT_LICENSE=enterprise
+  - HVAC_VAULT_VERSION=STABLE HVAC_VAULT_LICENSE=OSS
+  - TOXENV=flake8
 matrix:
   include:
-    - name: 'Python v2.7, Vault v0.8.3 - Integration/Unit Tests'
-      python: '2.7'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.8.3
-    - name: 'Python v2.7, Vault v0.9.6 - Integration/Unit Tests'
-      python: '2.7'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.9.6
-    - name: 'Python v2.7, Vault v0.10.4 - Integration/Unit Tests'
-      python: '2.7'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.10.4
-    - name: 'Python v2.7, Vault v0.11.0 - Integration/Unit Tests'
-      python: '2.7'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.11.0
-    - name: 'Python v2.7, Vault v0.11.1 - Integration/Unit Tests'
-      python: '2.7'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.11.1
-    - name: 'Python v2.7, Vault HEAD ref - Integration/Unit Tests'
-      python: '2.7'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=HEAD
-    - name: 'Python v2.7 - Linting (flake8)'
-      python: '2.7'
-      env:
-        - TOXENV=py27-flake8
-    - name: 'Python v3.6, Vault v0.8.3 - Integration/Unit Tests'
-      python: '3.6'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.8.3
-    - name: 'Python v3.6, Vault v0.9.6 - Integration/Unit Tests'
-      python: '3.6'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.9.6
-    - name: 'Python v3.6, Vault v0.10.4 - Integration/Unit Tests'
-      python: '3.6'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.10.4
-    - name: 'Python v3.6, Vault v0.11.0 - Integration/Unit Tests'
-      python: '3.6'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.11.0
-    - name: 'Python v3.6, Vault v0.11.1 - Integration/Unit Tests'
-      python: '3.6'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=0.11.1
-    - name: 'Python v3.6, Vault HEAD ref - Integration/Unit Tests'
-      python: '3.6'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=HEAD
-    - name: 'Python v3.6 - Linting (flake8)'
-      python: '3.6'
-      env:
-        - TOXENV=py27-flake8
+    - name: 'Vault OSS - Latest hvac-tested Release on Python 3.7'
+      python: '3.7'
+      env: HVAC_VAULT_VERSION=1.1.3 HVAC_VAULT_LICENSE=OSS
+    - name: 'Test Documentation Build - Sphinx: "make html"'
+      env: TOXENV=docs
+    - stage: PyPi Release
+      name: 'Publish to PyPI During Git "tag" Builds'
+      install: skip
+      script: skip
+      before_deploy:
+        - make package
+      deploy:
+        provider: pypi
+        user: hvac-bot
+        password:
+          secure: s9LLuUp1+ZTE3xvXdW9tF9hPUk7jxsFvol3PouDXdSVBNeVUhyHG1fMxOi1p8UOhx7e/iOGv8Bi77z0gDQgcynrFywhHEGbuna92Am40wMFT/Lu+JzHi8y2zBdahNsi80FnlNhW3MEtCNkXI6HgIlBpzEcfSm0ovfuncT0+5fCI=
+        distributions: "sdist bdist_wheel"
+        skip_cleanup: true
+        on:
+          tags: true
   allow_failures:
-    - name: 'Python v2.7, Vault HEAD ref - Integration/Unit Tests'
-      python: '2.7'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=HEAD
-    - name: 'Python v3.6, Vault HEAD ref - Integration/Unit Tests'
-      python: '3.6'
-      env:
-        - TOXENV=py27
-        - VAULT_VERSION=HEAD
+    # Ignore failed tests run against Vault development builds compiled from https://github.com/hashicorp/vault.
+    - env: HVAC_VAULT_VERSION=STABLE HVAC_VAULT_LICENSE=OSS
+  # Don't wait on the "allow_failures" build jobs before reporting on the overall success/failure of the current build.
+  fast_finish: true
 install:
-  - scripts/install-vault.sh ${VAULT_VERSION}
-  - pip install tox
+  - tests/scripts/install-consul.sh
+  - tests/scripts/install-vault.sh ${HVAC_VAULT_VERSION} ${HVAC_VAULT_LICENSE}
+  - pip install tox-travis
 script:
-  - export PATH=$HOME/bin:$PATH
   - make test
+notifications:
+  webhooks:
+    secure: "IuHvo7I77oZKo++O9QSq1TOtYOvZnqSTg7uO1lr7/+6fMsFLZE4YQVVqa3qyJwn5Q2DafAIdzVj5OyWT9FK8hDTAhqkDL4iVnh+Bk+ph1WBYA0OzFv32K0M46byUwTMmeq51DIuTozhJ/v58pYk6d95MJT9J5/cXCeGmr2vAUqo="

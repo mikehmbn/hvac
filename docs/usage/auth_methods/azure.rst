@@ -4,7 +4,7 @@ Azure
 =====
 
 .. note::
-    Every method under the :py:attr:`Client class's azure attribute<hvac.v1.Client.azure.auth>` includes a `mount_point` parameter that can be used to address the Azure auth method under a custom mount path. E.g., If enabling the Azure auth method using Vault's CLI commands via `vault auth enable -path=my-azure azure`", the `mount_point` parameter in :py:meth:`hvac.api.auth.Azure` methods would be set to "my-azure".
+    Every method under the :py:attr:`Client class's azure attribute<hvac.v1.Client.azure.auth>` includes a `mount_point` parameter that can be used to address the Azure auth method under a custom mount path. E.g., If enabling the Azure auth method using Vault's CLI commands via `vault auth enable -path=my-azure azure`", the `mount_point` parameter in :py:meth:`hvac.api.auth_methods.Azure` methods would be set to "my-azure".
 
 Enabling the Auth Method
 ------------------------
@@ -33,7 +33,7 @@ Enabling the Auth Method
 Configure
 ---------
 
-:py:meth:`hvac.api.auth.Azure.configure`
+:py:meth:`hvac.api.auth_methods.Azure.configure`
 
 .. code:: python
 
@@ -41,7 +41,7 @@ Configure
     import hvac
     client = hvac.Client()
 
-    client.azure.configure(
+    client.auth.azure.configure(
         tenant_id='my-tenant-id'
         resource='my-resource',
         client_id=os.environ.get('AZURE_CLIENT_ID'),
@@ -51,39 +51,39 @@ Configure
 Read Config
 -----------
 
-:py:meth:`hvac.api.auth.Azure.read_config`
+:py:meth:`hvac.api.auth_methods.Azure.read_config`
 
 .. code:: python
 
     import hvac
     client = hvac.Client()
 
-    read_config = client.azure.read_config()
+    read_config = client.auth.azure.read_config()
     print('The configured tenant_id is: {id}'.format(id=read_config['tenant_id'))
 
 Delete Config
 -------------
 
-:py:meth:`hvac.api.auth.Azure.delete_config`
+:py:meth:`hvac.api.auth_methods.Azure.delete_config`
 
 .. code:: python
 
     import hvac
     client = hvac.Client()
 
-    client.azure.delete_config()
+    client.auth.azure.delete_config()
 
 Create a Role
 -------------
 
-:py:meth:`hvac.api.auth.Azure.create_role`
+:py:meth:`hvac.api.auth_methods.Azure.create_role`
 
 .. code:: python
 
     import hvac
     client = hvac.Client()
 
-    client.azure.create_role(
+    client.auth.azure.create_role(
         name='my-role',
         policies=policies,
         bound_service_principal_ids=bound_service_principal_ids,
@@ -92,7 +92,7 @@ Create a Role
 Read A Role
 -----------
 
-:py:meth:`hvac.api.auth.Azure.read_role`
+:py:meth:`hvac.api.auth_methods.Azure.read_role`
 
 .. code:: python
 
@@ -100,9 +100,8 @@ Read A Role
     client = hvac.Client()
 
     role_name = 'my-role'
-    read_role_response = client.azure.auth.read_role(
+    read_role_response = client.auth.azure.read_role(
         name=role_name,
-        mount_point=self.TEST_MOUNT_POINT,
     )
     print('Policies for role "{name}": {policies}'.format(
         name='my-role',
@@ -112,14 +111,14 @@ Read A Role
 List Roles
 ----------
 
-:py:meth:`hvac.api.auth.Azure.list_roles`
+:py:meth:`hvac.api.auth_methods.Azure.list_roles`
 
 .. code:: python
 
     import hvac
     client = hvac.Client()
 
-    roles = client.azure.list_roles()
+    roles = client.auth.azure.list_roles()
     print('The following Azure auth roles are configured: {roles}'.format(
         roles=','.join(roles['keys']),
     ))
@@ -128,28 +127,28 @@ List Roles
 Delete A Role
 -------------
 
-:py:meth:`hvac.api.auth.Azure.delete_role`
+:py:meth:`hvac.api.auth_methods.Azure.delete_role`
 
 .. code:: python
 
     import hvac
     client = hvac.Client()
 
-    client.azure.delete_role(
+    client.auth.azure.delete_role(
         name='my-role',
     )
 
 Login
 -----
 
-:py:meth:`hvac.api.auth.Azure.login`
+:py:meth:`hvac.api.auth_methods.Azure.login`
 
 .. code:: python
 
     import hvac
     client = hvac.Client()
 
-    client.azure.login(
+    client.auth.azure.login(
         role=role_name,
         jwt='Some MST JWT...',
     )

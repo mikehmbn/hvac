@@ -16,7 +16,7 @@ class Kv(VaultApiBase):
     allowed_kv_versions = ['1', '2']
 
     def __init__(self, adapter, default_kv_version='2'):
-        """Create a new Kv instnace.
+        """Create a new Kv instance.
 
         :param adapter: Instance of :py:class:`hvac.adapters.Adapter`; used for performing HTTP requests.
         :type adapter: hvac.adapters.Adapter
@@ -54,13 +54,13 @@ class Kv(VaultApiBase):
 
     @default_kv_version.setter
     def default_kv_version(self, default_kv_version):
-        if default_kv_version not in self.allowed_kv_versions:
+        if str(default_kv_version) not in self.allowed_kv_versions:
             error_message = 'Invalid "default_kv_version"; "{allowed}" allowed, "{provided}" provided'.format(
                 allowed=','.join(self.allowed_kv_versions),
                 provided=default_kv_version
             )
             raise ValueError(error_message)
-        self._default_kv_version = default_kv_version
+        self._default_kv_version = str(default_kv_version)
 
     def __getattr__(self, item):
         """Overridden magic method used to direct method calls to the appropriate KV version's hvac class.

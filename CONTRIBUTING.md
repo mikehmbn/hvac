@@ -1,17 +1,53 @@
 # Contributing
 
-Feel free to open pull requests with additional features or improvements!
+Feel free to open issues and/or pull requests with additional features or improvements! For general questions about contributing to hvac that don't fit in the scope of a GitHub issue, and for any folks are interested in becoming a maintainer of hvac, please feel free to join our gitter chat room for discussions at: [gitter.im/hvac/community](https://gitter.im/hvac/community).
+
+## Typical Devevelopment Environment Setup
+
+```
+virtualenv hvac-env
+source hvac-env/bin/activate
+
+git clone https://github.com/hvac/hvac.git
+cd hvac
+pip install -e .
+```
 
 ## Testing
 
 Integration tests will automatically start a Vault server in the background. Just make sure
 the latest `vault` binary is available in your `PATH`.
 
-1. [Install Vault](https://vaultproject.io/docs/install/index.html) or execute `VAULT_BRANCH=release scripts/install-vault-release.sh`
-2. [Install Tox](http://tox.readthedocs.org/en/latest/install.html)
+1. [Install Vault](https://vaultproject.io/docs/install/index.html) or execute `tests/scripts/install-vault.sh`. Note: by default this script installs the OSS version of Vault. An enterprise trial version of the Vault binary is available for testing (but has an explicitly limited runtime). To run integration test cases requiring enterprise Vault, you can invoke the installation script with: `install-vault.sh <desired version> 'enterprise'`
+2. Install requirements
+```
+cd hvac
+pip install -r requirements.txt
+```
 3. Run tests: `make test`
 
+## Updating Requirements
+
+This project uses [pip-tool's](https://pypi.org/project/pip-tools/) `pip-compile` utility to manage its various requirements.
+Any given requirements file can be manually updated by following the pip-compile comments at the top of the file. Alternatively, the `update-all-requirements` Makefile target can be used to update requirements across the board (this has a dependency on docker being available).
+
 ## Documentation
+
+### Adding New Documentation Files
+
+When adding documentation for an entirely new feature / class, it often makes sense to place the documentation in a new `.rst` file. After drafting the new file, be sure to add the file as an entry to at least one table of contents directive (e.g., `toctree`) to ensure it gets rendered and published on https://hvac.readthedocs.io/. As an example, the process for adding a new documentation file for a secrets engine related to Active Directory could involve:
+
+1. Add a new file to `docs/usage/secrets_engines` with a name along the lines of `active_directory.rst`.
+2. Update the `toctree` directive within `docs/usage/secrets_engines/index.rst` to add a line for `active_directory`
+3. Verify the new file is being included and rendered as expected by running `make html` from the `docs/` subdirectory. You can then view the rendered HTML documentation, in a browser or otherwise, by opening `docs/_build/html/index.html`.
+
+### Testing Docs
+
+```
+cd docs/
+pip install -r requirements.txt
+make doctest
+```
 
 ### Examples
 
@@ -24,84 +60,22 @@ Due to the close connection between this module and HashiCorp Vault versions, br
 * A deprecation notice should be displayed to callers of the module until the minor revision +2. E.g., a notice added in version 0.6.2 could see the marked method / functionality removed in version 0.8.0.
 * Breaking changes should be called out in the [CHANGELOG.md](CHANGELOG.md) for the affected version.
 
-## Package Publishing Checklist
+## Creating / Publishing Releases
 
-The follow list uses version number `0.6.2`, this string should be updated to match the intended release version. It is based on this document: [https://gist.github.com/audreyr/5990987](https://gist.github.com/audreyr/5990987)
-
-- [ ] Ensure your working directory is clear by running:
+- [ ] Checkout the `develop` branch:
   ```
-  make distclean
-  ```
-- [ ] Checkout a working branch:
-  ```
-  git checkout -b master_v0-6-2
-  ```
-- [ ] Update [CHANGELOG.md](CHANGELOG.md) with a list of the included changes. Those changes can be reviewed, and their associated GitHub PR number confirmed, via GitHub's pull request diff using the previous version's tag. E.g.: [https://github.com/hvac/hvac/compare/v0.6.1...master](https://github.com/hvac/hvac/compare/v0.6.1...master)
-- [ ] Commit the changelog changes:
-  ```
-  git add CHANGELOG.md
-  git commit -S -m "Updates for upcoming release 0.6.2"
-  ```
-- [ ] Update version number using [bumpversion](https://github.com/peritus/bumpversion). This example is for the "patch" version but can also be "minor" or "major" as needed.
-  ```
-  bumpversion patch version
-  ```
-- [ ] Commit the version changes:
-  ```
-  git add version setup.cfg
-  git commit -S -m "Bump patch version to $(cat version)"
-  ```
-- [ ] Install the package again for local development, but with the new version number:
-  ```
-  python setup.py develop
-  ```
-- [ ] Run the tests and verify that they all pass:
-  ```
-  make test
-  ```
-- [ ] Invoke setup.py / setuptools via the "package" Makefile job to create the release version's sdist and wheel artifacts:
-  ```
-  make package
-  ```
-
-- [ ] Publish the sdist and wheel artifacts to [TestPyPI](https://packaging.python.org/guides/using-testpypi/) using [twine](https://pypi.org/project/twine/):
-  ```
-  twine upload --repository-url https://test.pypi.org/legacy/ dist/*.tar.gz dist/*.whl
-  ```
-- [ ] Check the TestPyPI project page to make sure that the README, and release notes display properly: [https://test.pypi.org/project/hvac/](https://test.pypi.org/project/hvac/)
-- [ ] Test that the version is correctly listed and it pip installs (`mktmpenv` is available via the [virtualenvwrapper module](http://virtualenvwrapper.readthedocs.io/en/latest/install.html#shell-startup-file)) using the [TestPyPI](https://packaging.python.org/guides/using-testpypi/) repository (Note: installation will currently fail due to missing recent releases of `requests` on TestPyPI):
-  ```
-  mktmpenv
-  pip install --no-cache-dir --index-url https://test.pypi.org/simple hvac==
-  <verify releaes version shows up with the correct formatting in the resulting list>
-  pip install --no-cache-dir --index-url https://test.pypi.org/simple hvac==0.6.2
-  <verify hvac functionality>
-  deactivate
-  ```
-- [ ] Create a **draft** GitHub release using the contents of the new release version's [CHANGELOG.md](CHANGELOG.md) content: https://github.com/hvac/hvac/releases/new
-- [ ] Upload the sdist and whl files to the draft GitHub release as attached "binaries".
-- [ ] Push up the working branch (`git push`) and open a PR to merge the working branch into master:  [https://github.com/hvac/hvac/compare/master...master_v0-6-2](https://github.com/hvac/hvac/compare/master...master_v0-6-2)
-- [ ] After merging the working branch into master, tag master with the release version and push that up as well:
-  ```
-  git checkout master
+  git checkout develop
   git pull
-  git tag "v$(cat version)"
-  git push "v$(cat version)"
   ```
+- [ ] Update the version number using [bumpversion](https://github.com/peritus/bumpversion). Releases typically just use the "patch" bumpversion option; but "minor" and "major" are available as needed as needed. This will also add an appropriate git commit for the new version.
+  ```
+  bumpversion --no-tag {patch|minor|major}
+  ```
+- [ ] Pull up the current draft [hvac release](https://github.com/hvac/hvac/releases/) and use the [release-drafter](https://github.com/toolmantim/release-drafter) generated release body to update [CHANGELOG.md](CHANGELOG.md). Then commit the changes:
+  ```
+  git commit CHANGELOG.md -m "Changelog updates for v$(grep -oP '(?<=current_version = ).*' .bumpversion.cfg)"
+  ```
+- [ ] Git push the updated develop branch (`git push`) and open a PR to rebase merge the develop branch into master:  [https://github.com/hvac/hvac/compare/master...develop](https://github.com/hvac/hvac/compare/master...develop). Ensure the PR has the "release" label applied and then merge it.
 
-- [ ] Publish the sdist and wheel artifacts to [PyPI](https://pypi.org/) using [twine](https://pypi.org/project/twine/):
-  ```
-  twine upload dist/*.tar.gz dist/*.whl
-  ```
-- [ ] Check the PyPI project page to make sure that the README, and release notes display properly: [https://pypi.org/project/hvac/](https://pypi.org/project/hvac/)
-- [ ] Test that the version is correctly listed and it pip installs (`mktmpenv` is available via the [virtualenvwrapper module](http://virtualenvwrapper.readthedocs.io/en/latest/install.html#shell-startup-file)) using the [TestPyPI](https://packaging.python.org/guides/using-testpypi/) repository:
-  ```
-  mktmpenv
-  pip install --no-cache-dir hvac==
-  <verify releaes version shows up with the correct formatting in the resulting list>
-  pip install --no-cache-dir hvac==0.6.2
-  <verify hvac functionality>
-  deactivate
-  ```
-
-- [ ] Publish the draft release on GitHub: [https://github.com/hvac/hvac/releases](https://github.com/hvac/hvac/releases)
+- [ ] Publish the draft release on GitHub: [https://github.com/hvac/hvac/releases](https://github.com/hvac/hvac/releases). Ensure the tag is set to the release name (e.g., vX.X.X) and the target is the master branch.
+  NOTE: [release-drafter](https://github.com/toolmantim/release-drafter) sets the release name by default. If performing a minor or major update, these values will need to be manually updated before publishing the draft release subsequently.

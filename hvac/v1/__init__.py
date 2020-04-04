@@ -1,25 +1,27 @@
 from __future__ import unicode_literals
 
 import json
+import os
 from base64 import b64encode
+
+from hvac import aws_utils, exceptions, adapters, utils, api
+from hvac.constants.client import DEPRECATED_PROPERTIES, DEFAULT_URL
 
 try:
     import hcl
-
     has_hcl_parser = True
 except ImportError:
     has_hcl_parser = False
-
-from hvac import aws_utils, exceptions, adapters, utils, api
 
 
 class Client(object):
     """The hvac Client class for HashiCorp's Vault."""
 
-    def __init__(self, url='http://localhost:8200', token=None,
+    def __init__(self, url=None, token=None,
                  cert=None, verify=True, timeout=30, proxies=None,
-                 allow_redirects=True, session=None, adapter=None, namespace=None):
-        """Creates a new hvac client instnace.
+                 allow_redirects=True, session=None, adapter=adapters.JSONAdapter,
+                 namespace=None, **kwargs):
+        """Creates a new hvac client instance.
 
         :param url: Base URL for the Vault instance being addressed.
         :type url: str
@@ -33,7 +35,7 @@ class Client(object):
         :type verify: Union[bool,str]
         :param timeout: The timeout value for requests sent to Vault.
         :type timeout: int
-        :param proxies: Proxies to use when preforming requests.
+        :param proxies: Proxies to use when performing requests.
             See: http://docs.python-requests.org/en/master/user/advanced/#proxies
         :type proxies: dict
         :param allow_redirects: Whether to follow redirects when sending requests to Vault.
@@ -41,35 +43,40 @@ class Client(object):
         :param session: Optional session object to use when performing request.
         :type session: request.Session
         :param adapter: Optional class to be used for performing requests. If none is provided, defaults to
-            hvac.adapters.Request
+            hvac.adapters.JSONRequest
         :type adapter: hvac.adapters.Adapter
+        :param kwargs: Additional parameters to pass to the adapter constructor.
+        :type kwargs: dict
         :param namespace: Optional Vault Namespace.
         :type namespace: str
         """
 
-        if adapter is not None:
-            self._adapter = adapter
-        else:
-            self._adapter = adapters.Request(
-                base_uri=url,
-                token=token,
-                cert=cert,
-                verify=verify,
-                timeout=timeout,
-                proxies=proxies,
-                allow_redirects=allow_redirects,
-                session=session,
-                namespace=namespace
-            )
+        token = token if token is not None else utils.get_token_from_env()
+        url = url if url else os.getenv('VAULT_ADDR', DEFAULT_URL)
+        self._adapter = adapter(
+            base_uri=url,
+            token=token,
+            cert=cert,
+            verify=verify,
+            timeout=timeout,
+            proxies=proxies,
+            allow_redirects=allow_redirects,
+            session=session,
+            namespace=namespace,
+            **kwargs
+        )
 
         # Instantiate API classes to be exposed as properties on this class starting with auth method classes.
-        self._github = api.auth.Github(adapter=self._adapter)
-        self._ldap = api.auth.Ldap(adapter=self._adapter)
-        self._mfa = api.auth.Mfa(adapter=self._adapter)
-        self._azure = api.Azure(adapter=self._adapter)
+        self._auth = api.AuthMethods(adapter=self._adapter)
+        self._secrets = api.SecretsEngines(adapter=self._adapter)
+        self._sys = api.SystemBackend(adapter=self._adapter)
 
-        # Secret engine attributes / properties.
-        self._kv = api.secrets_engines.Kv(adapter=self._adapter)
+    def __getattr__(self, name):
+        return utils.getattr_with_deprecated_properties(
+            obj=self,
+            item=name,
+            deprecated_properties=DEPRECATED_PROPERTIES
+        )
 
     @property
     def adapter(self):
@@ -112,49 +119,71 @@ class Client(object):
         self._adapter.allow_redirects = allow_redirects
 
     @property
-    def github(self):
-        """Accessor for the Client instance's Github methods. Provided via the :py:class:`hvac.api.auth.Github` class.
-
-        :return: This Client instance's associated Github instance.
-        :rtype: hvac.api.auth.Github
+    def auth(self):
+        """Accessor for the Client instance's auth methods. Provided via the :py:class:`hvac.api.AuthMethods` class.
+        :return: This Client instance's associated Auth instance.
+        :rtype: hvac.api.AuthMethods
         """
-        return self._github
+        return self._auth
 
     @property
-    def ldap(self):
-        """Accessor for the Client instance's LDAP methods. Provided via the :py:class:`hvac.api.auth.Ldap` class.
+    def secrets(self):
+        """Accessor for the Client instance's secrets engines. Provided via the :py:class:`hvac.api.SecretsEngines` class.
 
-        :return: This Client instance's associated Ldap instance.
-        :rtype: hvac.api.auth.Ldap
+        :return: This Client instance's associated SecretsEngines instance.
+        :rtype: hvac.api.SecretsEngines
         """
-        return self._ldap
+        return self._secrets
 
     @property
-    def mfa(self):
-        """Accessor for the Client instance's MFA methods. Provided via the :py:class:`hvac.api.auth.mfa` class.
+    def sys(self):
+        """Accessor for the Client instance's system backend methods.
+        Provided via the :py:class:`hvac.api.SystemBackend` class.
 
-        :return: This Client instance's associated MFA instance.
-        :rtype: hvac.api.auth.mfa
+        :return: This Client instance's associated SystemBackend instance.
+        :rtype: hvac.api.SystemBackend
         """
-        return self._mfa
+        return self._sys
 
     @property
-    def kv(self):
-        """Accessor for the Client instance's KV methods. Provided via the :py:class:`hvac.api.secrets_engines.Kv` class.
-
-        :return: This Client instance's associated Kv instance.
-        :rtype: hvac.api.secrets_engines.Kv
-        """
-        return self._kv
+    def generate_root_status(self):
+        return self.sys.read_root_generation_progress()
 
     @property
-    def azure(self):
-        """Accessor for the Client instance's Azure methods. Provided via the :py:class:`hvac.api.Azure` class.
+    def key_status(self):
+        """GET /sys/key-status
 
-        :return: This Client instance's associated Azure instance.
-        :rtype: hvac.api.Azure
+        :return: Information about the current encryption key used by Vault.
+        :rtype: dict
         """
-        return self._azure
+        return self.sys.get_encryption_key_status()['data']
+
+    @property
+    def rekey_status(self):
+        return self.sys.read_rekey_progress()
+
+    @property
+    def ha_status(self):
+        """Read the high availability status and current leader instance of Vault.
+
+        :return: The JSON response returned by read_leader_status()
+        :rtype: dict
+        """
+        return self.sys.read_leader_status()
+
+    @property
+    def seal_status(self):
+        """Read the seal status of the Vault.
+
+        This is an unauthenticated endpoint.
+
+        Supported methods:
+            GET: /sys/seal-status. Produces: 200 application/json
+
+        :return: The JSON response of the request.
+        :rtype: dict
+        """
+        return self.sys.read_seal_status()
 
     def read(self, path, wrap_ttl=None):
         """GET /<path>
@@ -167,7 +196,7 @@ class Client(object):
         :rtype:
         """
         try:
-            return self._adapter.get('/v1/{0}'.format(path), wrap_ttl=wrap_ttl).json()
+            return self._adapter.get('/v1/{0}'.format(path), wrap_ttl=wrap_ttl)
         except exceptions.InvalidPath:
             return None
 
@@ -183,7 +212,7 @@ class Client(object):
             payload = {
                 'list': True
             }
-            return self._adapter.get('/v1/{}'.format(path), params=payload).json()
+            return self._adapter.get('/v1/{0}'.format(path), params=payload)
         except exceptions.InvalidPath:
             return None
 
@@ -199,10 +228,7 @@ class Client(object):
         :return:
         :rtype:
         """
-        response = self._adapter.post('/v1/{0}'.format(path), json=kwargs, wrap_ttl=wrap_ttl)
-
-        if response.status_code == 200:
-            return response.json()
+        return self._adapter.post('/v1/{0}'.format(path), json=kwargs, wrap_ttl=wrap_ttl)
 
     def delete(self, path):
         """DELETE /<path>
@@ -214,350 +240,27 @@ class Client(object):
         """
         self._adapter.delete('/v1/{0}'.format(path))
 
-    def unwrap(self, token=None):
-        """POST /sys/wrapping/unwrap
+    def get_policy(self, name, parse=False):
+        """Retrieve the policy body for the named policy.
 
-        :param token:
-        :type token:
-        :return:
-        :rtype:
+        :param name: The name of the policy to retrieve.
+        :type name: str | unicode
+        :param parse: Specifies whether to parse the policy body using pyhcl or not.
+        :type parse: bool
+        :return: The (optionally parsed) policy body for the specified policy.
+        :rtype: str | dict
         """
-        if token:
-            payload = {
-                'token': token
-            }
-            return self._adapter.post('/v1/sys/wrapping/unwrap', json=payload).json()
-        else:
-            return self._adapter.post('/v1/sys/wrapping/unwrap').json()
-
-    def is_initialized(self):
-        """GET /sys/init
-
-        :return:
-        :rtype:
-        """
-        return self._adapter.get('/v1/sys/init').json()['initialized']
-
-    def initialize(self, secret_shares=5, secret_threshold=3, pgp_keys=None):
-        """PUT /sys/init
-
-        :param secret_shares:
-        :type secret_shares:
-        :param secret_threshold:
-        :type secret_threshold:
-        :param pgp_keys:
-        :type pgp_keys:
-        :return:
-        :rtype:
-        """
-        params = {
-            'secret_shares': secret_shares,
-            'secret_threshold': secret_threshold,
-        }
-
-        if pgp_keys:
-            if len(pgp_keys) != secret_shares:
-                raise ValueError('Length of pgp_keys must equal secret shares')
-
-            params['pgp_keys'] = pgp_keys
-
-        return self._adapter.put('/v1/sys/init', json=params).json()
-
-    @property
-    def seal_status(self):
-        """GET /sys/seal-status
-
-        :return:
-        :rtype:
-        """
-        return self._adapter.get('/v1/sys/seal-status').json()
-
-    def is_sealed(self):
-        """
-
-        :return:
-        :rtype:
-        """
-        return self.seal_status['sealed']
-
-    def seal(self):
-        """PUT /sys/seal
-
-        :return:
-        :rtype:
-        """
-        self._adapter.put('/v1/sys/seal')
-
-    def unseal_reset(self):
-        """PUT /sys/unseal
-
-        :return:
-        :rtype:
-        """
-        params = {
-            'reset': True,
-        }
-        return self._adapter.put('/v1/sys/unseal', json=params).json()
-
-    def unseal(self, key):
-        """PUT /sys/unseal
-
-        :param key:
-        :type key:
-        :return:
-        :rtype:
-        """
-        params = {
-            'key': key,
-        }
-
-        return self._adapter.put('/v1/sys/unseal', json=params).json()
-
-    def unseal_multi(self, keys):
-        """
-
-        :param keys:
-        :type keys:
-        :return:
-        :rtype:
-        """
-        result = None
-
-        for key in keys:
-            result = self.unseal(key)
-            if not result['sealed']:
-                break
-
-        return result
-
-    @property
-    def generate_root_status(self):
-        """GET /sys/generate-root/attempt
-
-        :return:
-        :rtype:
-        """
-        return self._adapter.get('/v1/sys/generate-root/attempt').json()
-
-    def start_generate_root(self, key, otp=False):
-        """PUT /sys/generate-root/attempt
-
-        :param key:
-        :type key:
-        :param otp:
-        :type otp:
-        :return:
-        :rtype:
-        """
-        params = {}
-        if otp:
-            params['otp'] = key
-        else:
-            params['pgp_key'] = key
-
-        return self._adapter.put('/v1/sys/generate-root/attempt', json=params).json()
-
-    def generate_root(self, key, nonce):
-        """PUT /sys/generate-root/update
-
-        :param key:
-        :type key:
-        :param nonce:
-        :type nonce:
-        :return:
-        :rtype:
-        """
-        params = {
-            'key': key,
-            'nonce': nonce,
-        }
-
-        return self._adapter.put('/v1/sys/generate-root/update', json=params).json()
-
-    def cancel_generate_root(self):
-        """DELETE /sys/generate-root/attempt
-
-        :return:
-        :rtype:
-        """
-
-        return self._adapter.delete('/v1/sys/generate-root/attempt').status_code == 204
-
-    @property
-    def key_status(self):
-        """GET /sys/key-status
-
-        :return: Information about the current encryption key used by Vault.
-        :rtype: dict
-        """
-        key_status_response = self._adapter.get('/v1/sys/key-status').json()
-        key_status = key_status_response['data']
-        return key_status
-
-    def rotate(self):
-        """PUT /sys/rotate
-
-        :return:
-        :rtype:
-        """
-        self._adapter.put('/v1/sys/rotate')
-
-    @property
-    def rekey_status(self):
-        """GET /sys/rekey/init
-
-        :return:
-        :rtype:
-        """
-        return self._adapter.get('/v1/sys/rekey/init').json()
-
-    def start_rekey(self, secret_shares=5, secret_threshold=3, pgp_keys=None,
-                    backup=False):
-        """PUT /sys/rekey/init
-
-        :param secret_shares: Specifies the number of shares to split the master key into.
-        :type secret_shares: int
-        :param secret_threshold: Specifies the number of shares required to reconstruct the master key. This must be
-            less than or equal to secret_shares.
-        :type secret_threshold: int
-        :param pgp_keys: List of PGP public keys used to encrypt the output unseal keys. Ordering is preserved. The keys
-            must be base64-encoded from their original binary representation. The size of this array must be the same as
-            secret_shares.
-        :type pgp_keys: list
-        :param backup: Specifies if using PGP-encrypted keys, whether Vault should also store a plaintext backup of the
-            PGP-encrypted keys at core/unseal-keys-backup in the physical storage backend. These can then be retrieved
-            and removed via the sys/rekey/backup endpoint.
-        :type backup: bool
-        :return: The full response object if an empty body is received, otherwise the JSON dict of the response.
-        :rtype: dict | request.Response
-        """
-        params = {
-            'secret_shares': secret_shares,
-            'secret_threshold': secret_threshold,
-        }
-
-        if pgp_keys:
-            if len(pgp_keys) != secret_shares:
-                raise ValueError('Length of pgp_keys must equal secret shares')
-
-            params['pgp_keys'] = pgp_keys
-            params['backup'] = backup
-
-        resp = self._adapter.put('/v1/sys/rekey/init', json=params)
-        if resp.text:
-            return resp.json()
-
-    def cancel_rekey(self):
-        """DELETE /sys/rekey/init
-
-        :return:
-        :rtype:
-        """
-        self._adapter.delete('/v1/sys/rekey/init')
-
-    def rekey(self, key, nonce=None):
-        """PUT /sys/rekey/update
-
-        :param key:
-        :type key:
-        :param nonce:
-        :type nonce:
-        :return:
-        :rtype:
-        """
-        params = {
-            'key': key,
-        }
-
-        if nonce:
-            params['nonce'] = nonce
-
-        return self._adapter.put('/v1/sys/rekey/update', json=params).json()
-
-    def rekey_multi(self, keys, nonce=None):
-        """
-
-        :param keys:
-        :type keys:
-        :param nonce:
-        :type nonce:
-        :return:
-        :rtype:
-        """
-        result = None
-
-        for key in keys:
-            result = self.rekey(key, nonce=nonce)
-            if result.get('complete'):
-                break
-
-        return result
-
-    def get_backed_up_keys(self):
-        """GET /sys/rekey/backup
-
-        :return:
-        :rtype:
-        """
-        return self._adapter.get('/v1/sys/rekey/backup').json()
-
-    @property
-    def ha_status(self):
-        """GET /sys/leader
-
-        :return:
-        :rtype:
-        """
-        return self._adapter.get('/v1/sys/leader').json()
-
-    def read_lease(self, lease_id):
-        """PUT /sys/leases/lookup
-
-        :param lease_id: Specifies the ID of the lease to lookup.
-        :type lease_id: str.
-        :return: Parsed JSON response from the leases PUT request
-        :rtype: dict.
-        """
-        params = {
-            'lease_id': lease_id
-        }
-        return self._adapter.put('/v1/sys/leases/lookup', json=params).json()
-
-    def renew_secret(self, lease_id, increment=None):
-        """PUT /sys/leases/renew
-
-        :param lease_id:
-        :type lease_id:
-        :param increment:
-        :type increment:
-        :return:
-        :rtype:
-        """
-        params = {
-            'lease_id': lease_id,
-            'increment': increment,
-        }
-        return self._adapter.put('/v1/sys/leases/renew', json=params).json()
-
-    def revoke_secret(self, lease_id):
-        """PUT /sys/revoke/<lease id>
-
-        :param lease_id:
-        :type lease_id:
-        :return:
-        :rtype:
-        """
-        self._adapter.put('/v1/sys/revoke/{0}'.format(lease_id))
-
-    def revoke_secret_prefix(self, path_prefix):
-        """PUT /sys/revoke-prefix/<path prefix>
-
-        :param path_prefix:
-        :type path_prefix:
-        :return:
-        :rtype:
-        """
-        self._adapter.put('/v1/sys/revoke-prefix/{0}'.format(path_prefix))
+        try:
+            policy = self.sys.read_policy(name=name)['data']['rules']
+        except exceptions.InvalidPath:
+            return None
+
+        if parse:
+            if not has_hcl_parser:
+                raise ImportError('pyhcl is required for policy parsing')
+            policy = hcl.loads(policy)
+
+        return policy
 
     def revoke_self_token(self):
         """PUT /auth/token/revoke-self
@@ -567,274 +270,11 @@ class Client(object):
         """
         self._adapter.put('/v1/auth/token/revoke-self')
 
-    def list_secret_backends(self):
-        """GET /sys/mounts
-
-        :return: List of all the mounted secrets engines.
-        :rtype: dict
-        """
-        list_secret_backends_response = self._adapter.get('/v1/sys/mounts').json()
-        secret_backends = list_secret_backends_response['data']
-        return secret_backends
-
-    def enable_secret_backend(self, backend_type, description=None, mount_point=None, config=None, options=None):
-        """POST /sys/mounts/<mount point>
-
-        :param backend_type:
-        :type backend_type:
-        :param description:
-        :type description:
-        :param mount_point:
-        :type mount_point:
-        :param config:
-        :type config:
-        :param options:
-        :type options:
-        :return:
-        :rtype:
-        """
-        if not mount_point:
-            mount_point = backend_type
-
-        params = {
-            'type': backend_type,
-            'description': description,
-            'config': config,
-            'options': options,
-        }
-
-        self._adapter.post('/v1/sys/mounts/{0}'.format(mount_point), json=params)
-
-    def tune_secret_backend(self, backend_type, mount_point=None, default_lease_ttl=None, max_lease_ttl=None, description=None,
-                            audit_non_hmac_request_keys=None, audit_non_hmac_response_keys=None, listing_visibility=None,
-                            passthrough_request_headers=None):
-        """POST /sys/mounts/<mount point>/tune
-
-        :param backend_type: Type of the secret backend to modify
-        :type backend_type: str
-        :param mount_point: The path the associated secret backend is mounted
-        :type mount_point: str
-        :param description: Specifies the description of the mount. This overrides the current stored value, if any.
-        :type description: str
-        :param default_lease_ttl: Default time-to-live. This overrides the global default. A value of 0 is equivalent to
-            the system default TTL
-        :type default_lease_ttl: int
-        :param max_lease_ttl: Maximum time-to-live. This overrides the global default. A value of 0 are equivalent and
-            set to the system max TTL.
-        :type max_lease_ttl: int
-        :param audit_non_hmac_request_keys: Specifies the comma-separated list of keys that will not be HMAC'd by audit
-            devices in the request data object.
-        :type audit_non_hmac_request_keys: list
-        :param audit_non_hmac_response_keys: Specifies the comma-separated list of keys that will not be HMAC'd by audit
-            devices in the response data object.
-        :type audit_non_hmac_response_keys: list
-        :param listing_visibility: Speficies whether to show this mount in the UI-specific listing endpoint. Valid
-            values are "unauth" or "".
-        :type listing_visibility: str
-        :param passthrough_request_headers: Comma-separated list of headers to whitelist and pass from the request
-            to the backend.
-        :type passthrough_request_headers: str
-
-        :return: The response from Vault
-        :rtype: request.Response
-        """
-
-        if not mount_point:
-            mount_point = backend_type
-        # All parameters are optional for this method. Until/unless we include input validation, we simply loop over the
-        # parameters and add which parameters are set.
-        optional_parameters = [
-            'default_lease_ttl',
-            'max_lease_ttl',
-            'description',
-            'audit_non_hmac_request_keys',
-            'audit_non_hmac_response_keys',
-            'listing_visibility',
-            'passthrough_request_headers',
-        ]
-        params = {}
-        for optional_parameter in optional_parameters:
-            if locals().get(optional_parameter) is not None:
-                params[optional_parameter] = locals().get(optional_parameter)
-        return self._adapter.post('/v1/sys/mounts/{0}/tune'.format(mount_point), json=params)
-
-    def get_secret_backend_tuning(self, backend_type, mount_point=None):
-        """GET /sys/mounts/<mount point>/tune
-
-        :param backend_type: Name of the secret engine. E.g. "aws".
-        :type backend_type: str | unicode
-        :param mount_point: Alternate argument for backend_type.
-        :type mount_point: str | unicode
-        :return: The specified mount's configuration.
-        :rtype: dict
-        """
-        if not mount_point:
-            mount_point = backend_type
-
-        read_config_response = self._adapter.get('/v1/sys/mounts/{0}/tune'.format(mount_point)).json()
-        return read_config_response['data']
-
-    def disable_secret_backend(self, mount_point):
-        """DELETE /sys/mounts/<mount point>
-
-        :param mount_point:
-        :type mount_point:
-        :return:
-        :rtype:
-        """
-        self._adapter.delete('/v1/sys/mounts/{0}'.format(mount_point))
-
-    def remount_secret_backend(self, from_mount_point, to_mount_point):
-        """POST /sys/remount
-
-        :param from_mount_point:
-        :type from_mount_point:
-        :param to_mount_point:
-        :type to_mount_point:
-        :return:
-        :rtype:
-        """
-        params = {
-            'from': from_mount_point,
-            'to': to_mount_point,
-        }
-
-        self._adapter.post('/v1/sys/remount', json=params)
-
-    def list_policies(self):
-        """GET /sys/policy
-
-        :return: List of configured policies.
-        :rtype: list
-        """
-        list_policies_response = self._adapter.get('/v1/sys/policy').json()
-        policies = list_policies_response['data']['policies']
-        return policies
-
-    def get_policy(self, name, parse=False):
-        """GET /sys/policy/<name>
-
-        :param name:
-        :type name:
-        :param parse:
-        :type parse:
-        :return:
-        :rtype:
-        """
-        try:
-            get_policy_response = self._adapter.get('/v1/sys/policy/{0}'.format(name)).json()
-            if get_policy_response.get('rules'):
-                policy = get_policy_response.get('rules')
-            else:
-                policy = get_policy_response['data'].get('rules')
-            if parse:
-                if not has_hcl_parser:
-                    raise ImportError('pyhcl is required for policy parsing')
-
-                policy = hcl.loads(policy)
-
-            return policy
-        except exceptions.InvalidPath:
-            return None
-
-    def set_policy(self, name, rules):
-        """PUT /sys/policy/<name>
-
-        :param name:
-        :type name:
-        :param rules:
-        :type rules:
-        :return:
-        :rtype:
-        """
-
-        if isinstance(rules, dict):
-            rules = json.dumps(rules)
-
-        params = {
-            'rules': rules,
-        }
-
-        self._adapter.put('/v1/sys/policy/{0}'.format(name), json=params)
-
-    def delete_policy(self, name):
-        """DELETE /sys/policy/<name>
-
-        :param name:
-        :type name:
-        :return:
-        :rtype:
-        """
-        self._adapter.delete('/v1/sys/policy/{0}'.format(name))
-
-    def list_audit_backends(self):
-        """GET /sys/audit
-
-        List only the enabled audit devices (it does not list all available audit devices). This endpoint requires sudo
-            capability in addition to any path-specific capabilities.
-
-        :return: List of enabled audit devices.
-        :rtype: dict
-        """
-        list_audit_devices_response = self._adapter.get('/v1/sys/audit').json()
-        return list_audit_devices_response['data']
-
-    def enable_audit_backend(self, backend_type, description=None, options=None, name=None):
-        """POST /sys/audit/<name>
-
-        :param backend_type:
-        :type backend_type:
-        :param description:
-        :type description:
-        :param options:
-        :type options:
-        :param name:
-        :type name:
-        :return:
-        :rtype:
-        """
-        if not name:
-            name = backend_type
-
-        params = {
-            'type': backend_type,
-            'description': description,
-            'options': options,
-        }
-
-        self._adapter.post('/v1/sys/audit/{0}'.format(name), json=params)
-
-    def disable_audit_backend(self, name):
-        """DELETE /sys/audit/<name>
-
-        :param name:
-        :type name:
-        :return:
-        :rtype:
-        """
-        self._adapter.delete('/v1/sys/audit/{0}'.format(name))
-
-    def audit_hash(self, name, input):
-        """POST /sys/audit-hash
-
-        :param name: Specifies the path of the audit device to generate hashes for. This is part of the request URL.
-        :type name: str | unicode
-        :param input: Specifies the input string to hash.
-        :type input: str | unicode
-        :return: Dict containing a key of "hash" and the associated hash value.
-        :rtype: dict
-        """
-        params = {
-            'input': input,
-        }
-        audit_hash_response = self._adapter.post('/v1/sys/audit-hash/{0}'.format(name), json=params).json()
-        return audit_hash_response['data']
-
     def create_token(self, role=None, token_id=None, policies=None, meta=None,
                      no_parent=False, lease=None, display_name=None,
                      num_uses=None, no_default_policy=False,
                      ttl=None, orphan=False, wrap_ttl=None, renewable=None,
-                     explicit_max_ttl=None, period=None):
+                     explicit_max_ttl=None, period=None, token_type=None):
         """POST /auth/token/create
 
         POST /auth/token/create/<role>
@@ -871,6 +311,8 @@ class Client(object):
         :type explicit_max_ttl:
         :param period:
         :type period:
+        :param token_type:
+        :type token_type:
         :return:
         :rtype:
         """
@@ -896,13 +338,15 @@ class Client(object):
 
         if period:
             params['period'] = period
+        if token_type:
+            params['type'] = token_type
 
         if orphan:
-            return self._adapter.post('/v1/auth/token/create-orphan', json=params, wrap_ttl=wrap_ttl).json()
+            return self._adapter.post('/v1/auth/token/create-orphan', json=params, wrap_ttl=wrap_ttl)
         elif role:
-            return self._adapter.post('/v1/auth/token/create/{0}'.format(role), json=params, wrap_ttl=wrap_ttl).json()
+            return self._adapter.post('/v1/auth/token/create/{0}'.format(role), json=params, wrap_ttl=wrap_ttl)
         else:
-            return self._adapter.post('/v1/auth/token/create', json=params, wrap_ttl=wrap_ttl).json()
+            return self._adapter.post('/v1/auth/token/create', json=params, wrap_ttl=wrap_ttl)
 
     def lookup_token(self, token=None, accessor=False, wrap_ttl=None):
         """GET /auth/token/lookup/<token>
@@ -929,13 +373,13 @@ class Client(object):
         if token:
             if accessor:
                 path = '/v1/auth/token/lookup-accessor'
-                return self._adapter.post(path, json=accessor_param, wrap_ttl=wrap_ttl).json()
+                return self._adapter.post(path, json=accessor_param, wrap_ttl=wrap_ttl)
             else:
                 path = '/v1/auth/token/lookup'
-                return self._adapter.post(path, json=token_param).json()
+                return self._adapter.post(path, json=token_param)
         else:
             path = '/v1/auth/token/lookup-self'
-            return self._adapter.get(path, wrap_ttl=wrap_ttl).json()
+            return self._adapter.get(path, wrap_ttl=wrap_ttl)
 
     def revoke_token(self, token, orphan=False, accessor=False):
         """POST /auth/token/revoke
@@ -996,9 +440,9 @@ class Client(object):
 
         if token is not None:
             params['token'] = token
-            return self._adapter.post('/v1/auth/token/renew', json=params, wrap_ttl=wrap_ttl).json()
+            return self._adapter.post('/v1/auth/token/renew', json=params, wrap_ttl=wrap_ttl)
         else:
-            return self._adapter.post('/v1/auth/token/renew-self', json=params, wrap_ttl=wrap_ttl).json()
+            return self._adapter.post('/v1/auth/token/renew-self', json=params, wrap_ttl=wrap_ttl)
 
     def create_token_role(self, role,
                           allowed_policies=None, disallowed_policies=None,
@@ -1115,7 +559,7 @@ class Client(object):
             'user_id': user_id,
         }
 
-        return self.auth('/v1/auth/{0}/login'.format(mount_point), json=params, use_token=use_token)
+        return self.login('/v1/auth/{0}/login'.format(mount_point), json=params, use_token=use_token)
 
     def auth_tls(self, mount_point='cert', use_token=True):
         """POST /auth/<mount point>/login
@@ -1127,7 +571,7 @@ class Client(object):
         :return:
         :rtype:
         """
-        return self.auth('/v1/auth/{0}/login'.format(mount_point), use_token=use_token)
+        return self.login('/v1/auth/{0}/login'.format(mount_point), use_token=use_token)
 
     def auth_userpass(self, username, password, mount_point='userpass', use_token=True, **kwargs):
         """POST /auth/<mount point>/login/<username>
@@ -1151,8 +595,12 @@ class Client(object):
 
         params.update(kwargs)
 
-        return self.auth('/v1/auth/{0}/login/{1}'.format(mount_point, username), json=params, use_token=use_token)
+        return self.login('/v1/auth/{0}/login/{1}'.format(mount_point, username), json=params, use_token=use_token)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.iam_login,
+    )
     def auth_aws_iam(self, access_key, secret_key, session_token=None, header_value=None, mount_point='aws', role='', use_token=True, region='us-east-1'):
         """POST /auth/<mount point>/login
 
@@ -1196,8 +644,12 @@ class Client(object):
             'role': role,
         }
 
-        return self.auth('/v1/auth/{0}/login'.format(mount_point), json=params, use_token=use_token)
+        return self.login('/v1/auth/{0}/login'.format(mount_point), json=params, use_token=use_token)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.ec2_login,
+    )
     def auth_ec2(self, pkcs7, nonce=None, role=None, use_token=True, mount_point='aws-ec2'):
         """POST /auth/<mount point>/login
 
@@ -1224,31 +676,7 @@ class Client(object):
         if role:
             params['role'] = role
 
-        return self.auth('/v1/auth/{0}/login'.format(mount_point), json=params, use_token=use_token)
-
-    def auth_gcp(self, role, jwt, mount_point='gcp', use_token=True):
-        """
-        POST /auth/<mount point>/login
-
-        :param role: identifier for the GCP auth backend role being requested
-        :type role: str.
-        :param jwt: JSON Web Token from the GCP metadata service
-        :type jwt: str.
-        :param mount_point: The "path" the GCP auth backend was mounted on. Vault currently defaults to "gcp".
-        :type mount_point: str.
-        :param use_token: if True, uses the token in the response received from the auth request to set the "token"
-            attribute on the current Client class instance.
-        :type use_token: bool.
-        :return: parsed JSON response from the auth POST request
-        :rtype: dict.
-        """
-
-        params = {
-            'role': role,
-            'jwt': jwt
-        }
-
-        return self.auth('/v1/auth/{0}/login'.format(mount_point), json=params, use_token=use_token)
+        return self.login('/v1/auth/{0}/login'.format(mount_point), json=params, use_token=use_token)
 
     def create_userpass(self, username, password, policies, mount_point='userpass', **kwargs):
         """POST /auth/<mount point>/users/<username>
@@ -1289,7 +717,7 @@ class Client(object):
         :rtype:
         """
         try:
-            return self._adapter.get('/v1/auth/{}/users'.format(mount_point), params={'list': True}).json()
+            return self._adapter.get('/v1/auth/{}/users'.format(mount_point), params={'list': True})
         except exceptions.InvalidPath:
             return None
 
@@ -1303,7 +731,7 @@ class Client(object):
         :return:
         :rtype:
         """
-        return self._adapter.get('/v1/auth/{}/users/{}'.format(mount_point, username)).json()
+        return self._adapter.get('/v1/auth/{}/users/{}'.format(mount_point, username))
 
     def update_userpass_policies(self, username, policies, mount_point='userpass'):
         """POST /auth/<mount point>/users/<username>/policies
@@ -1405,7 +833,7 @@ class Client(object):
         :rtype:
         """
         path = '/v1/auth/{0}/map/app-id/{1}'.format(mount_point, app_id)
-        return self._adapter.get(path, wrap_ttl=wrap_ttl).json()
+        return self._adapter.get(path, wrap_ttl=wrap_ttl)
 
     def delete_app_id(self, app_id, mount_point='app-id'):
         """DELETE /auth/<mount_point>/map/app-id/<app_id>
@@ -1467,7 +895,7 @@ class Client(object):
         :rtype:
         """
         path = '/v1/auth/{0}/map/user-id/{1}'.format(mount_point, user_id)
-        return self._adapter.get(path, wrap_ttl=wrap_ttl).json()
+        return self._adapter.get(path, wrap_ttl=wrap_ttl)
 
     def delete_user_id(self, user_id, mount_point='app-id'):
         """DELETE /auth/<mount_point>/map/user-id/<user_id>
@@ -1481,19 +909,38 @@ class Client(object):
         """
         return self._adapter.delete('/v1/auth/{0}/map/user-id/{1}'.format(mount_point, user_id))
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.configure,
+    )
     def create_vault_ec2_client_configuration(self, access_key, secret_key, endpoint=None, mount_point='aws-ec2'):
         """POST /auth/<mount_point>/config/client
 
-        :param access_key:
-        :type access_key:
-        :param secret_key:
-        :type secret_key:
-        :param endpoint:
-        :type endpoint:
-        :param mount_point:
-        :type mount_point:
-        :return:
-        :rtype:
+        Configure the credentials required to perform API calls to AWS as well as custom endpoints to talk to AWS APIs.
+        The instance identity document fetched from the PKCS#7 signature will provide the EC2 instance ID. The
+        credentials configured using this endpoint will be used to query the status of the instances via
+        DescribeInstances API. If static credentials are not provided using this endpoint, then the credentials will be
+        retrieved from the environment variables AWS_ACCESS_KEY, AWS_SECRET_KEY and AWS_REGION respectively. If the
+        credentials are still not found and if the method is configured on an EC2 instance with metadata querying
+        capabilities, the credentials are fetched automatically
+
+        :param access_key: AWS Access key with permissions to query AWS APIs. The permissions required depend on the
+            specific configurations. If using the iam auth method without inferencing, then no credentials are
+            necessary. If using the ec2 auth method or using the iam auth method with inferencing, then these
+            credentials need access to ec2:DescribeInstances. If additionally a bound_iam_role is specified, then these
+            credentials also need access to iam:GetInstanceProfile. If, however, an alternate sts configuration is set
+            for the target account, then the credentials must be permissioned to call sts:AssumeRole on the configured
+            role, and that role must have the permissions described here.
+        :type access_key: str|unicode
+        :param secret_key: AWS Secret key with permissions to query AWS APIs.
+        :type secret_key: str|unicode
+        :param endpoint: URL to override the default generated endpoint for making AWS EC2 API calls.
+        :type endpoint: str|unicode
+        :param mount_point: The "path" the AWS auth backend was mounted on. Vault currently defaults to "aws". "aws-ec2"
+            is the default argument for backwards comparability within this module.
+        :type mount_point: str|unicode
+        :return: The response of the request.
+        :rtype: requests.Response
         """
         params = {
             'access_key': access_key,
@@ -1504,6 +951,10 @@ class Client(object):
 
         return self._adapter.post('/v1/auth/{0}/config/client'.format(mount_point), json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.read_config,
+    )
     def get_vault_ec2_client_configuration(self, mount_point='aws-ec2'):
         """GET /auth/<mount_point>/config/client
 
@@ -1512,8 +963,12 @@ class Client(object):
         :return:
         :rtype:
         """
-        return self._adapter.get('/v1/auth/{0}/config/client'.format(mount_point)).json()
+        return self._adapter.get('/v1/auth/{0}/config/client'.format(mount_point))
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.delete_config,
+    )
     def delete_vault_ec2_client_configuration(self, mount_point='aws-ec2'):
         """DELETE /auth/<mount_point>/config/client
 
@@ -1524,6 +979,10 @@ class Client(object):
         """
         return self._adapter.delete('/v1/auth/{0}/config/client'.format(mount_point))
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.create_certificate_configuration,
+    )
     def create_vault_ec2_certificate_configuration(self, cert_name, aws_public_cert, mount_point='aws-ec2'):
         """POST /auth/<mount_point>/config/certificate/<cert_name>
 
@@ -1542,6 +1001,10 @@ class Client(object):
         }
         return self._adapter.post('/v1/auth/{0}/config/certificate/{1}'.format(mount_point, cert_name), json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.read_certificate_configuration,
+    )
     def get_vault_ec2_certificate_configuration(self, cert_name, mount_point='aws-ec2'):
         """GET /auth/<mount_point>/config/certificate/<cert_name>
 
@@ -1552,8 +1015,12 @@ class Client(object):
         :return:
         :rtype:
         """
-        return self._adapter.get('/v1/auth/{0}/config/certificate/{1}'.format(mount_point, cert_name)).json()
+        return self._adapter.get('/v1/auth/{0}/config/certificate/{1}'.format(mount_point, cert_name))
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.list_certificate_configurations,
+    )
     def list_vault_ec2_certificate_configurations(self, mount_point='aws-ec2'):
         """GET /auth/<mount_point>/config/certificates?list=true
 
@@ -1563,8 +1030,12 @@ class Client(object):
         :rtype:
         """
         params = {'list': True}
-        return self._adapter.get('/v1/auth/{0}/config/certificates'.format(mount_point), params=params).json()
+        return self._adapter.get('/v1/auth/{0}/config/certificates'.format(mount_point), params=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.create_role,
+    )
     def create_ec2_role(self, role, bound_ami_id=None, bound_account_id=None, bound_iam_role_arn=None,
                         bound_iam_instance_profile_arn=None, bound_ec2_instance_id=None, bound_region=None,
                         bound_vpc_id=None, bound_subnet_id=None, role_tag=None,  ttl=None, max_ttl=None, period=None,
@@ -1655,6 +1126,10 @@ class Client(object):
 
         return self._adapter.post('/v1/auth/{0}/role/{1}'.format(mount_point, role), json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.read_role,
+    )
     def get_ec2_role(self, role, mount_point='aws-ec2'):
         """GET /auth/<mount_point>/role/<role>
 
@@ -1665,8 +1140,12 @@ class Client(object):
         :return:
         :rtype:
         """
-        return self._adapter.get('/v1/auth/{0}/role/{1}'.format(mount_point, role)).json()
+        return self._adapter.get('/v1/auth/{0}/role/{1}'.format(mount_point, role))
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.delete_role,
+    )
     def delete_ec2_role(self, role, mount_point='aws-ec2'):
         """DELETE /auth/<mount_point>/role/<role>
 
@@ -1679,6 +1158,10 @@ class Client(object):
         """
         return self._adapter.delete('/v1/auth/{0}/role/{1}'.format(mount_point, role))
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.list_roles,
+    )
     def list_ec2_roles(self, mount_point='aws-ec2'):
         """GET /auth/<mount_point>/roles?list=true
 
@@ -1688,10 +1171,14 @@ class Client(object):
         :rtype:
         """
         try:
-            return self._adapter.get('/v1/auth/{0}/roles'.format(mount_point), params={'list': True}).json()
+            return self._adapter.get('/v1/auth/{0}/roles'.format(mount_point), params={'list': True})
         except exceptions.InvalidPath:
             return None
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.11.2',
+        new_method=api.auth_methods.Aws.create_role_tags,
+    )
     def create_ec2_role_tag(self, role, policies=None, max_ttl=None, instance_id=None,
                             disallow_reauthentication=False, allow_instance_migration=False, mount_point='aws-ec2'):
         """POST /auth/<mount_point>/role/<role>/tag
@@ -1728,18 +1215,23 @@ class Client(object):
         return self._adapter.post('/v1/auth/{0}/role/{1}/tag'.format(mount_point, role), json=params)
 
     def auth_cubbyhole(self, token):
-        """POST /v1/sys/wrapping/unwrap
+        """Perform a login request with a wrapped token.
 
-        :param token:
-        :type token:
-        :return:
-        :rtype:
+        Stores the unwrapped token in the resulting Vault response for use by the :py:meth:`hvac.adapters.Adapter`
+            instance under the _adapater Client attribute.
+
+        :param token: Wrapped token
+        :type token: str | unicode
+        :return: The (JSON decoded) response of the auth request
+        :rtype: dict
         """
         self.token = token
-        return self.auth('/v1/sys/wrapping/unwrap')
+        return self.login('/v1/sys/wrapping/unwrap')
 
-    def auth(self, url, use_token=True, **kwargs):
-        """Performs a request (typically to a path prefixed with "/v1/auth") and optionaly stores the client token sent
+    def login(self, url, use_token=True, **kwargs):
+        """Perform a login request.
+
+        Associated request is typically to a path prefixed with "/v1/auth") and optionally stores the client token sent
             in the resulting Vault response for use by the :py:meth:`hvac.adapters.Adapter` instance under the _adapater
             Client attribute.
 
@@ -1753,121 +1245,11 @@ class Client(object):
         :return: The response of the auth request.
         :rtype: requests.Response
         """
-        return self._adapter.auth(
+        return self._adapter.login(
             url=url,
             use_token=use_token,
             **kwargs
         )
-
-    def list_auth_backends(self):
-        """GET /sys/auth
-
-        :return: List of all enabled auth methods.
-        :rtype: dict
-        """
-        list_auth_methods_response = self._adapter.get('/v1/sys/auth').json()
-        return list_auth_methods_response['data']
-
-    def enable_auth_backend(self, backend_type, description=None, mount_point=None, config=None, plugin_name=None):
-        """POST /sys/auth/<mount point>
-
-        :param backend_type:
-        :type backend_type:
-        :param description:
-        :type description:
-        :param mount_point:
-        :type mount_point:
-        :param config:
-        :type config:
-        :param plugin_name:
-        :type plugin_name:
-        :return:
-        :rtype:
-        """
-        if not mount_point:
-            mount_point = backend_type
-
-        params = {
-            'type': backend_type,
-            'description': description,
-            'config': config,
-            'plugin_name': plugin_name,
-        }
-        self._adapter.post('/v1/sys/auth/{0}'.format(mount_point), json=params)
-
-    def tune_auth_backend(self, backend_type, mount_point=None, default_lease_ttl=None, max_lease_ttl=None, description=None,
-                          audit_non_hmac_request_keys=None, audit_non_hmac_response_keys=None, listing_visibility=None,
-                          passthrough_request_headers=None):
-        """POST /sys/auth/<mount point>/tune
-
-        :param backend_type: Name of the auth backend to modify (e.g., token, approle, etc.)
-        :type backend_type: str.
-        :param mount_point: The path the associated auth backend is mounted under.
-        :type mount_point: str.
-        :param description: Specifies the description of the mount. This overrides the current stored value, if any.
-        :type description: str.
-        :param default_lease_ttl:
-        :type default_lease_ttl: int.
-        :param max_lease_ttl:
-        :type max_lease_ttl: int.
-        :param audit_non_hmac_request_keys: Specifies the comma-separated list of keys that will not be HMAC'd by
-            audit devices in the request data object.
-        :type audit_non_hmac_request_keys: list.
-        :param audit_non_hmac_response_keys: Specifies the comma-separated list of keys that will not be HMAC'd
-            by audit devices in the response data object.
-        :type audit_non_hmac_response_keys: list.
-        :param listing_visibility: Specifies whether to show this mount in the UI-specific listing endpoint.
-            Valid values are "unauth" or "".
-        :type listing_visibility: str.
-        :param passthrough_request_headers: Comma-separated list of headers to whitelist and pass from the request
-            to the backend.
-        :type passthrough_request_headers: list.
-        :return: The JSON response from Vault
-        :rtype: dict.
-        """
-        if not mount_point:
-            mount_point = backend_type
-        # All parameters are optional for this method. Until/unless we include input validation, we simply loop over the
-        # parameters and add which parameters are set.
-        optional_parameters = [
-            'default_lease_ttl',
-            'max_lease_ttl',
-            'description',
-            'audit_non_hmac_request_keys',
-            'audit_non_hmac_response_keys',
-            'listing_visibility',
-            'passthrough_request_headers',
-        ]
-        params = {}
-        for optional_parameter in optional_parameters:
-            if locals().get(optional_parameter) is not None:
-                params[optional_parameter] = locals().get(optional_parameter)
-        return self._adapter.post('/v1/sys/auth/{0}/tune'.format(mount_point), json=params)
-
-    def get_auth_backend_tuning(self, backend_type, mount_point=None):
-        """GET /sys/auth/<mount point>/tune
-
-        :param backend_type: Name of the auth backend to modify (e.g., token, approle, etc.)
-        :type backend_type: str.
-        :param mount_point: The path the associated auth backend is mounted under.
-        :type mount_point: str.
-        :return: The JSON response from Vault
-        :rtype: dict.
-        """
-        if not mount_point:
-            mount_point = backend_type
-
-        return self._adapter.get('/v1/sys/auth/{0}/tune'.format(mount_point)).json()
-
-    def disable_auth_backend(self, mount_point):
-        """DELETE /sys/auth/<mount point>
-
-        :param mount_point:
-        :type mount_point:
-        :return:
-        :rtype:
-        """
-        self._adapter.delete('/v1/sys/auth/{0}'.format(mount_point))
 
     def create_role(self, role_name, mount_point='approle', **kwargs):
         """POST /auth/<mount_point>/role/<role name>
@@ -1906,7 +1288,7 @@ class Client(object):
         :rtype:
         """
 
-        return self._adapter.get('/v1/auth/{0}/role?list=true'.format(mount_point)).json()
+        return self._adapter.get('/v1/auth/{0}/role?list=true'.format(mount_point))
 
     def get_role_id(self, role_name, mount_point='approle'):
         """GET /auth/<mount_point>/role/<role name>/role-id
@@ -1920,7 +1302,7 @@ class Client(object):
         """
 
         url = '/v1/auth/{0}/role/{1}/role-id'.format(mount_point, role_name)
-        return self._adapter.get(url).json()['data']['role_id']
+        return self._adapter.get(url)['data']['role_id']
 
     def set_role_id(self, role_name, role_id, mount_point='approle'):
         """POST /auth/<mount_point>/role/<role name>/role-id
@@ -1951,7 +1333,7 @@ class Client(object):
         :return:
         :rtype:
         """
-        return self._adapter.get('/v1/auth/{0}/role/{1}'.format(mount_point, role_name)).json()
+        return self._adapter.get('/v1/auth/{0}/role/{1}'.format(mount_point, role_name))
 
     def create_role_secret_id(self, role_name, meta=None, cidr_list=None, wrap_ttl=None, mount_point='approle'):
         """POST /auth/<mount_point>/role/<role name>/secret-id
@@ -1976,7 +1358,7 @@ class Client(object):
             params['metadata'] = json.dumps(meta)
         if cidr_list is not None:
             params['cidr_list'] = cidr_list
-        return self._adapter.post(url, json=params, wrap_ttl=wrap_ttl).json()
+        return self._adapter.post(url, json=params, wrap_ttl=wrap_ttl)
 
     def get_role_secret_id(self, role_name, secret_id, mount_point='approle'):
         """POST /auth/<mount_point>/role/<role name>/secret-id/lookup
@@ -1994,7 +1376,7 @@ class Client(object):
         params = {
             'secret_id': secret_id
         }
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
     def list_role_secrets(self, role_name, mount_point='approle'):
         """LIST /auth/<mount_point>/role/<role name>/secret-id
@@ -2010,7 +1392,7 @@ class Client(object):
             mount_point=mount_point,
             name=role_name
         )
-        return self._adapter.list(url).json()
+        return self._adapter.list(url)
 
     def get_role_secret_id_accessor(self, role_name, secret_id_accessor, mount_point='approle'):
         """POST /auth/<mount_point>/role/<role name>/secret-id-accessor/lookup
@@ -2026,7 +1408,7 @@ class Client(object):
         """
         url = '/v1/auth/{0}/role/{1}/secret-id-accessor/lookup'.format(mount_point, role_name)
         params = {'secret_id_accessor': secret_id_accessor}
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
     def delete_role_secret_id(self, role_name, secret_id, mount_point='approle'):
         """POST /auth/<mount_point>/role/<role name>/secret-id/destroy
@@ -2047,7 +1429,7 @@ class Client(object):
         return self._adapter.post(url, json=params)
 
     def delete_role_secret_id_accessor(self, role_name, secret_id_accessor, mount_point='approle'):
-        """DELETE /auth/<mount_point>/role/<role name>/secret-id/<secret_id_accessor>
+        """POST /auth/<mount_point>/role/<role name>/secret-id-accessor/destroy
 
         :param role_name:
         :type role_name:
@@ -2058,8 +1440,11 @@ class Client(object):
         :return:
         :rtype:
         """
-        url = '/v1/auth/{0}/role/{1}/secret-id-accessor/{2}'.format(mount_point, role_name, secret_id_accessor)
-        return self._adapter.delete(url)
+        url = '/v1/auth/{0}/role/{1}/secret-id-accessor/destroy'.format(mount_point, role_name)
+        params = {
+            'secret_id_accessor': secret_id_accessor
+        }
+        return self._adapter.post(url, json=params)
 
     def create_role_custom_secret_id(self, role_name, secret_id, meta=None, mount_point='approle'):
         """POST /auth/<mount_point>/role/<role name>/custom-secret-id
@@ -2081,7 +1466,7 @@ class Client(object):
         }
         if meta is not None:
             params['meta'] = meta
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
     def auth_approle(self, role_id, secret_id=None, mount_point='approle', use_token=True):
         """POST /auth/<mount_point>/login
@@ -2103,7 +1488,7 @@ class Client(object):
         if secret_id is not None:
             params['secret_id'] = secret_id
 
-        return self.auth('/v1/auth/{0}/login'.format(mount_point), json=params, use_token=use_token)
+        return self.login('/v1/auth/{0}/login'.format(mount_point), json=params, use_token=use_token)
 
     def create_kubernetes_configuration(self, kubernetes_host, kubernetes_ca_cert=None, token_reviewer_jwt=None, pem_keys=None, mount_point='kubernetes'):
         """POST /auth/<mount_point>/config
@@ -2147,7 +1532,7 @@ class Client(object):
         """
 
         url = '/v1/auth/{0}/config'.format(mount_point)
-        return self._adapter.get(url).json()
+        return self._adapter.get(url)
 
     def create_kubernetes_role(self, name, bound_service_account_names, bound_service_account_namespaces, ttl="",
                                max_ttl="", period="", policies=None, mount_point='kubernetes'):
@@ -2203,7 +1588,7 @@ class Client(object):
         """
 
         url = 'v1/auth/{0}/role/{1}'.format(mount_point, name)
-        return self._adapter.get(url).json()
+        return self._adapter.get(url)
 
     def list_kubernetes_roles(self, mount_point='kubernetes'):
         """GET /auth/<mount_point>/role?list=true
@@ -2215,7 +1600,7 @@ class Client(object):
         """
 
         url = 'v1/auth/{0}/role?list=true'.format(mount_point)
-        return self._adapter.get(url).json()
+        return self._adapter.get(url)
 
     def delete_kubernetes_role(self, role, mount_point='kubernetes'):
         """DELETE /auth/<mount_point>/role/:role
@@ -2251,8 +1636,12 @@ class Client(object):
             'jwt': jwt
         }
         url = 'v1/auth/{0}/login'.format(mount_point)
-        return self.auth(url, json=params, use_token=use_token)
+        return self.login(url, json=params, use_token=use_token)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.create_key,
+    )
     def transit_create_key(self, name, convergent_encryption=None, derived=None, exportable=None,
                            key_type=None, mount_point='transit'):
         """POST /<mount_point>/keys/<name>
@@ -2285,6 +1674,10 @@ class Client(object):
 
         return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.read_key,
+    )
     def transit_read_key(self, name, mount_point='transit'):
         """GET /<mount_point>/keys/<name>
 
@@ -2296,8 +1689,12 @@ class Client(object):
         :rtype:
         """
         url = '/v1/{0}/keys/{1}'.format(mount_point, name)
-        return self._adapter.get(url).json()
+        return self._adapter.get(url)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.list_keys,
+    )
     def transit_list_keys(self, mount_point='transit'):
         """GET /<mount_point>/keys?list=true
 
@@ -2307,8 +1704,12 @@ class Client(object):
         :rtype:
         """
         url = '/v1/{0}/keys?list=true'.format(mount_point)
-        return self._adapter.get(url).json()
+        return self._adapter.get(url)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.delete_key,
+    )
     def transit_delete_key(self, name, mount_point='transit'):
         """DELETE /<mount_point>/keys/<name>
 
@@ -2322,6 +1723,10 @@ class Client(object):
         url = '/v1/{0}/keys/{1}'.format(mount_point, name)
         return self._adapter.delete(url)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.update_key_configuration,
+    )
     def transit_update_key(self, name, min_decryption_version=None, min_encryption_version=None, deletion_allowed=None,
                            mount_point='transit'):
         """POST /<mount_point>/keys/<name>/config
@@ -2350,6 +1755,10 @@ class Client(object):
 
         return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.rotate_key,
+    )
     def transit_rotate_key(self, name, mount_point='transit'):
         """POST /<mount_point>/keys/<name>/rotate
 
@@ -2363,6 +1772,10 @@ class Client(object):
         url = '/v1/{0}/keys/{1}/rotate'.format(mount_point, name)
         return self._adapter.post(url)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.export_key,
+    )
     def transit_export_key(self, name, key_type, version=None, mount_point='transit'):
         """GET /<mount_point>/export/<key_type>/<name>(/<version>)
 
@@ -2381,8 +1794,12 @@ class Client(object):
             url = '/v1/{0}/export/{1}/{2}/{3}'.format(mount_point, key_type, name, version)
         else:
             url = '/v1/{0}/export/{1}/{2}'.format(mount_point, key_type, name)
-        return self._adapter.get(url).json()
+        return self._adapter.get(url)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.encrypt_data,
+    )
     def transit_encrypt_data(self, name, plaintext, context=None, key_version=None, nonce=None, batch_input=None,
                              key_type=None, convergent_encryption=None, mount_point='transit'):
         """POST /<mount_point>/encrypt/<name>
@@ -2425,8 +1842,12 @@ class Client(object):
         if convergent_encryption is not None:
             params['convergent_encryption'] = convergent_encryption
 
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.decrypt_data,
+    )
     def transit_decrypt_data(self, name, ciphertext, context=None, nonce=None, batch_input=None, mount_point='transit'):
         """POST /<mount_point>/decrypt/<name>
 
@@ -2456,8 +1877,12 @@ class Client(object):
         if batch_input is not None:
             params['batch_input'] = batch_input
 
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.rewrap_data,
+    )
     def transit_rewrap_data(self, name, ciphertext, context=None, key_version=None, nonce=None, batch_input=None,
                             mount_point='transit'):
         """POST /<mount_point>/rewrap/<name>
@@ -2492,8 +1917,12 @@ class Client(object):
         if batch_input is not None:
             params['batch_input'] = batch_input
 
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.generate_data_key,
+    )
     def transit_generate_data_key(self, name, key_type, context=None, nonce=None, bits=None, mount_point='transit'):
         """POST /<mount_point>/datakey/<type>/<name>
 
@@ -2521,8 +1950,12 @@ class Client(object):
         if bits is not None:
             params['bits'] = bits
 
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.generate_random_bytes,
+    )
     def transit_generate_rand_bytes(self, data_bytes=None, output_format=None, mount_point='transit'):
         """POST /<mount_point>/random(/<data_bytes>)
 
@@ -2544,8 +1977,12 @@ class Client(object):
         if output_format is not None:
             params["format"] = output_format
 
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.hash_data,
+    )
     def transit_hash_data(self, hash_input, algorithm=None, output_format=None, mount_point='transit'):
         """POST /<mount_point>/hash(/<algorithm>)
 
@@ -2571,8 +2008,12 @@ class Client(object):
         if output_format is not None:
             params['format'] = output_format
 
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.generate_hmac,
+    )
     def transit_generate_hmac(self, name, hmac_input, key_version=None, algorithm=None, mount_point='transit'):
         """POST /<mount_point>/hmac/<name>(/<algorithm>)
 
@@ -2599,8 +2040,12 @@ class Client(object):
         if key_version is not None:
             params['key_version'] = key_version
 
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.sign_data,
+    )
     def transit_sign_data(self, name, input_data, key_version=None, algorithm=None, context=None, prehashed=None,
                           mount_point='transit', signature_algorithm='pss'):
         """POST /<mount_point>/sign/<name>(/<algorithm>)
@@ -2640,8 +2085,12 @@ class Client(object):
             params['prehashed'] = prehashed
         params['signature_algorithm'] = signature_algorithm
 
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
 
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.secrets_engines.Transit.verify_signed_data,
+    )
     def transit_verify_signed_data(self, name, input_data, algorithm=None, signature=None, hmac=None, context=None,
                                    prehashed=None, mount_point='transit', signature_algorithm='pss'):
         """POST /<mount_point>/verify/<name>(/<algorithm>)
@@ -2685,21 +2134,428 @@ class Client(object):
             params['prehashed'] = prehashed
         params['signature_algorithm'] = signature_algorithm
 
-        return self._adapter.post(url, json=params).json()
+        return self._adapter.post(url, json=params)
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.unwrap,
+    )
+    def unwrap(self, token=None):
+        return self.sys.unwrap(token=token)
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.list_policies,
+    )
+    def list_policies(self):
+        policies = self.sys.list_policies()['data']['policies']
+        return policies
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.create_or_update_policy,
+    )
+    def set_policy(self, name, rules):
+        """Add a new or update an existing policy.
+
+        Once a policy is updated, it takes effect immediately to all associated users.
+
+        Supported methods:
+            PUT: /sys/policy/{name}. Produces: 204 (empty body)
+
+        :param name: Specifies the name of the policy to create.
+        :type name: str | unicode
+        :param policy: Specifies the policy document.
+        :type policy: str | unicode | dict
+        """
+        if isinstance(rules, dict):
+            rules = json.dumps(rules)
+        params = {
+            'rules': rules,
+        }
+        api_path = utils.format_url(
+            '/v1/sys/policy/{name}',
+            name=name,
+        )
+        self._adapter.put(api_path, json=params)
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.delete_policy,
+    )
+    def delete_policy(self, name):
+        self.sys.delete_policy(name=name)
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.is_sealed,
+    )
+    def is_sealed(self):
+        return self.sys.is_sealed()
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.seal,
+    )
+    def seal(self):
+        self.sys.seal()
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.submit_unseal_key,
+    )
+    def unseal_reset(self):
+        return self.sys.submit_unseal_key(reset=True)
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.submit_unseal_key,
+    )
+    def unseal(self, key):
+        return self.sys.submit_unseal_key(key=key)
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.submit_unseal_keys,
+    )
+    def unseal_multi(self, keys):
+        return self.sys.submit_unseal_keys(keys=keys)
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.list_mounted_secrets_engines,
+    )
+    def list_secret_backends(self):
+        return self.sys.list_mounted_secrets_engines()
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.enable_secrets_engine,
+    )
+    def enable_secret_backend(self, backend_type, description=None, mount_point=None, config=None, options=None):
+        return self.sys.enable_secrets_engine(
+            backend_type=backend_type,
+            path=mount_point,
+            description=description,
+            config=config,
+            options=options,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.tune_mount_configuration,
+    )
+    def tune_secret_backend(self, backend_type, mount_point=None, default_lease_ttl=None, max_lease_ttl=None, description=None,
+                            audit_non_hmac_request_keys=None, audit_non_hmac_response_keys=None, listing_visibility=None,
+                            passthrough_request_headers=None):
+        if not mount_point:
+            mount_point = backend_type
+
+        return self.sys.tune_mount_configuration(
+            path=mount_point,
+            default_lease_ttl=default_lease_ttl,
+            max_lease_ttl=max_lease_ttl,
+            description=description,
+            audit_non_hmac_request_keys=audit_non_hmac_request_keys,
+            audit_non_hmac_response_keys=audit_non_hmac_response_keys,
+            listing_visibility=listing_visibility,
+            passthrough_request_headers=passthrough_request_headers,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.read_mount_configuration,
+    )
+    def get_secret_backend_tuning(self, backend_type, mount_point=None):
+        """GET /sys/mounts/<mount point>/tune
+
+        :param backend_type: Name of the secret engine. E.g. "aws".
+        :type backend_type: str | unicode
+        :param mount_point: Alternate argument for backend_type.
+        :type mount_point: str | unicode
+        :return: The specified mount's configuration.
+        :rtype: dict
+        """
+        if not mount_point:
+            mount_point = backend_type
+        return self.sys.read_mount_configuration(
+            path=mount_point,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.disable_secrets_engine,
+    )
+    def disable_secret_backend(self, mount_point):
+        return self.sys.disable_secrets_engine(
+            path=mount_point,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.move_backend,
+    )
+    def remount_secret_backend(self, from_mount_point, to_mount_point):
+        return self.sys.move_backend(
+            from_path=from_mount_point,
+            to_path=to_mount_point,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.read_lease,
+    )
+    def read_lease(self, lease_id):
+        return self.sys.read_lease(
+            lease_id=lease_id,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.renew_lease,
+    )
+    def renew_secret(self, lease_id, increment=None):
+        return self.sys.renew_lease(
+            lease_id=lease_id,
+            increment=increment,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.revoke_lease,
+    )
+    def revoke_secret(self, lease_id):
+        return self.sys.revoke_lease(
+            lease_id=lease_id,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.revoke_lease,
+    )
+    def revoke_secret_prefix(self, path_prefix):
+        self.sys.revoke_prefix(
+            prefix=path_prefix,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.rotate_encryption_key,
+    )
+    def rotate(self):
+        self.sys.rotate_encryption_key()
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.start_rekey,
+    )
+    def start_rekey(self, secret_shares=5, secret_threshold=3, pgp_keys=None, backup=False):
+        return self.sys.start_rekey(
+            secret_shares=secret_shares,
+            secret_threshold=secret_threshold,
+            pgp_keys=pgp_keys,
+            backup=backup,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.cancel_rekey,
+    )
+    def cancel_rekey(self):
+        return self.sys.cancel_rekey()
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.rekey,
+    )
+    def rekey(self, key, nonce=None):
+        self.sys.rekey(
+            key=key,
+            nonce=nonce,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.rekey_multi,
+    )
+    def rekey_multi(self, keys, nonce=None):
+        return self.sys.rekey_multi(
+            keys=keys,
+            nonce=nonce,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.read_backup_keys,
+    )
+    def get_backed_up_keys(self):
+        return self.sys.read_backup_keys()
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.is_initialized,
+    )
+    def is_initialized(self):
+        return self.sys.is_initialized()
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.initialize,
+    )
+    def initialize(self, secret_shares=5, secret_threshold=3, pgp_keys=None):
+        return self.sys.initialize(
+            secret_shares=secret_shares,
+            secret_threshold=secret_threshold,
+            pgp_keys=pgp_keys,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.start_root_token_generation,
+    )
+    def start_generate_root(self, key, otp=False):
+        params = {}
+        if otp:
+            params['otp'] = key
+        else:
+            params['pgp_key'] = key
+        return self.sys.start_root_token_generation(**params)
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.generate_root,
+    )
+    def generate_root(self, key, nonce):
+        return self.sys.generate_root(
+            key=key,
+            nonce=nonce,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.cancel_root_generation,
+    )
+    def cancel_generate_root(self):
+        return self.sys.cancel_root_generation().status_code == 204
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.list_auth_methods,
+    )
+    def list_auth_backends(self):
+        return self.sys.list_auth_methods()
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.enable_auth_method,
+    )
+    def enable_auth_backend(self, backend_type, description=None, mount_point=None, config=None, plugin_name=None):
+        return self.sys.enable_auth_method(
+            method_type=backend_type,
+            description=description,
+            config=config,
+            path=mount_point,
+            plugin_name=plugin_name,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.tune_auth_method,
+    )
+    def tune_auth_backend(self, backend_type, mount_point=None, default_lease_ttl=None, max_lease_ttl=None, description=None,
+                          audit_non_hmac_request_keys=None, audit_non_hmac_response_keys=None, listing_visibility="",
+                          passthrough_request_headers=None):
+        if not mount_point:
+            mount_point = backend_type
+        return self.sys.tune_auth_method(
+            path=mount_point,
+            default_lease_ttl=default_lease_ttl,
+            max_lease_ttl=max_lease_ttl,
+            description=description,
+            audit_non_hmac_request_keys=audit_non_hmac_request_keys,
+            audit_non_hmac_response_keys=audit_non_hmac_response_keys,
+            listing_visibility=listing_visibility,
+            passthrough_request_headers=passthrough_request_headers,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.read_auth_method_tuning,
+    )
+    def get_auth_backend_tuning(self, backend_type, mount_point=None):
+        if not mount_point:
+            mount_point = backend_type
+        return self.sys.read_auth_method_tuning(
+            path=mount_point,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.disable_auth_method,
+    )
+    def disable_auth_backend(self, mount_point):
+        return self.sys.disable_auth_method(
+            path=mount_point,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.list_enabled_audit_devices,
+    )
+    def list_audit_backends(self):
+        return self.sys.list_enabled_audit_devices()
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.enable_audit_device,
+    )
+    def enable_audit_backend(self, backend_type, description=None, options=None, name=None):
+        self.sys.enable_audit_device(
+            device_type=backend_type,
+            description=description,
+            options=options,
+            path=name,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.disable_audit_device,
+    )
+    def disable_audit_backend(self, name):
+        self.sys.disable_audit_device(
+            path=name,
+        )
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.SystemBackend.calculate_hash,
+    )
+    def audit_hash(self, name, input):
+        return self.sys.calculate_hash(
+            path=name,
+            input_to_hash=input,
+        )
 
     @utils.deprecated_method(
         to_be_removed_in_version='0.8.0',
-        new_method=api.auth.Ldap.login,
+        new_method=api.auth_methods.Ldap.login,
     )
     def auth_ldap(self, *args, **kwargs):
-        return self.ldap.login(*args, **kwargs)
+        return self.auth.ldap.login(*args, **kwargs)
+
+    @utils.deprecated_method(
+        to_be_removed_in_version='0.9.0',
+        new_method=api.auth_methods.Gcp.login,
+    )
+    def auth_gcp(self, *args, **kwargs):
+        return self.auth.gcp.login(*args, **kwargs)
 
     @utils.deprecated_method(
         to_be_removed_in_version='0.8.0',
-        new_method=api.auth.Github.login,
+        new_method=api.auth_methods.Github.login,
     )
     def auth_github(self, *args, **kwargs):
-        return self.github.login(*args, **kwargs)
+        return self.auth.github.login(*args, **kwargs)
 
     @utils.deprecated_method(
         to_be_removed_in_version='0.8.0',

@@ -12,20 +12,20 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- Project information -----------------------------------------------------
 
 project = u'hvac'
-copyright = u'2018, Ian Unruh, Jeffrey Hogan'
+copyright = u'2018-2019, Ian Unruh, Jeffrey Hogan'
 author = u'Ian Unruh, Jeffrey Hogan'
 
 # The short X.Y version
-version = u'0.6.1'
+version = '0.10.0'
 # The full version, including alpha/beta/rc tags
-release = u'0.6.1'
+release = '0.10.0'
 
 
 # -- General configuration ---------------------------------------------------
 
 extensions = [
+    'docs.ext.hvac_doctest',
     'sphinx.ext.autodoc',
-    'sphinx.ext.doctest',
     'sphinx.ext.coverage',
     'sphinx.ext.viewcode',
     'sphinx.ext.githubpages',
@@ -49,7 +49,11 @@ pygments_style = 'sphinx'
 
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
-
+html_context = {'no_skippy': True}
+html_theme_options = {
+    # Toc options
+    'collapse_navigation': False,
+}
 
 # -- Options for HTMLHelp output ---------------------------------------------
 
@@ -66,6 +70,34 @@ epub_copyright = copyright
 
 # A list of files that should not be packed into the epub file.
 epub_exclude_files = ['search.html']
+
+# -- doctest configuration -------------------------------------------------
+if os.getenv('READ_THE_DOCS_BUILD') is not None:
+    doctest_global_enabled = False
+
+doctest_global_setup = '''
+import os
+from pprint import pprint, pformat
+
+import mock
+
+import hvac
+from tests import utils as test_utils
+from tests.doctest import doctest_global_setup
+from tests.utils.server_manager import ServerManager
+
+client_cert_path = test_utils.get_config_file_path('client-cert.pem')
+client_key_path = test_utils.get_config_file_path('client-key.pem')
+server_cert_path = test_utils.get_config_file_path('server-cert.pem')
+
+manager, mocker = doctest_global_setup()
+client = manager.client
+'''
+
+doctest_global_cleanup = '''
+mocker.stop()
+manager.stop()
+'''
 
 # -- Autodoc configuration -------------------------------------------------
 
